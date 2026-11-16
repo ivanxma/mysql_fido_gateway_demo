@@ -4,6 +4,8 @@
 
 The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) translates selected environment values into `Gateway` arguments. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management. The [new application tutorial](new-application.md) has its own small starter and a separate backend port, 5002.
 
+The [login/main tutorial](login-main-tutorial.md) uses backend 5003 and cookie `gateway_login_session`. Its local Flask helper also reads `SESSION_TTL_SECONDS` (default 300, range 1–3600) for retained authenticated connections; that variable does not configure the reference app or the first starter.
+
 The effective launcher order is:
 
 1. Inherit the shell environment.

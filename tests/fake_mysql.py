@@ -179,6 +179,11 @@ class FakeMySQL:
                 self.key = ec.EllipticCurvePublicNumbers(int.from_bytes(cose[-2], 'big'),
                             int.from_bytes(cose[-3], 'big'), ec.SECP256R1()).public_key()
                 ok(sock, 1)
+            elif query == 'SELECT 1 AS alive':
+                resultset(sock, ['alive'], [1])
+            elif query.startswith("SELECT 'Hello World' AS message"):
+                resultset(sock, ['message', 'mysql_account', 'connection_id'],
+                          ['Hello World', user + '@localhost', 987])
             elif query.startswith("SELECT 'hello world'"):
                 resultset(sock, ['hello', 'account', 'connection_id', 'version'],
                           ['hello world', user + '@localhost', 987, '8.4.0-protocol-fixture'])

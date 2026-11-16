@@ -2,6 +2,8 @@
 
 See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
 
+For a separate YubiKey login page followed by a protected main page and Hello World button, use the [login application tutorial](docs/login-main-tutorial.md). Its minimal `app.py` delegates Flask and browser message handling to `lib/flask_util.py`.
+
 A reusable Python transport and three-column Flask demo for this goal:
 
 **A remote user registers their own YubiKey in their browser; MySQL's existing

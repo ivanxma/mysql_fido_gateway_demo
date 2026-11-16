@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant Browser
+    participant Flask as Flask + flask_util
+    participant Worker as Per-user worker
+    participant Key as YubiKey
+    participant DB as MySQL
+    User->>Browser: Enter username and password
+    Browser->>Flask: POST /api/login (HTTPS + CSRF)
+    Flask->>Worker: Start Gateway.connect
+    Worker->>DB: Password authentication
+    DB-->>Worker: WebAuthn challenge
+    Worker-->>Flask: Publish browser request
+    Browser->>Flask: Poll login flow
+    Flask-->>Browser: WebAuthn options
+    Browser->>Key: navigator.credentials.get
+    User->>Key: Touch key (PIN if requested)
+    Key-->>Browser: Signed assertion
+    Browser->>Flask: POST flow response
+    Flask->>Worker: Deliver assertion
+    Worker->>DB: WebAuthn response
+    DB-->>Worker: Authentication OK
+    Note over Worker,DB: Retain this user's authenticated connection
+    Browser->>Flask: Poll success
+    Flask-->>Browser: Rotate opaque cookie, open /main
+    User->>Browser: Click Retrieve Hello World
+    Browser->>Flask: POST /api/hello (CSRF)
+    Flask->>Worker: Queue fixed query
+    Worker->>DB: Health check and SELECT 'Hello World'
+    DB-->>Worker: Greeting, account, connection ID
+    Worker-->>Flask: Dictionary row
+    Flask-->>Browser: Display Hello World
+    User->>Browser: Log out
+    Browser->>Flask: POST /api/logout (CSRF)
+    Flask->>Worker: Revoke session and stop
+    Worker->>DB: Close connection
+    Flask-->>Browser: Return to /login

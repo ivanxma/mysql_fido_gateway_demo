@@ -1,5 +1,7 @@
 # Step by step tutorial for a new gateway application
 
+For a separate login page followed by a protected main page and Hello World button, continue with the [login and main page tutorial](login-main-tutorial.md). Its minimal `app.py` delegates authentication and message flow to `lib/flask_util.py`.
+
 Build a separate Flask application that registers a YubiKey, logs in to MySQL using password plus WebAuthn, and executes `hello world` on that user's connection. The [complete starter files](examples/new_app/) provide the backend, browser flow handling, page, and configuration.
 
 The new application has two user actions: **Register key** and **Login and say hello**. A DBA prepares the account separately. There is no administrator token or root-password form in this example.

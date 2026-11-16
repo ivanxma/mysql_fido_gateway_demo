@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>YubiKey login</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="{{ url_for('static', filename='common.js') }}" defer></script>
+<script src="{{ url_for('static', filename='login.js') }}" defer></script></head>
+<body><main><header><p>MYSQL · GATEWAY TUTORIAL</p><h1>Sign in with your YubiKey</h1>
+<p>Use your MySQL password and an already registered key.</p></header>
+<div class="activity" role="status" aria-live="polite" id="status">Insert your YubiKey to begin.</div>
+<section><form id="login"><label>MySQL username *<input name="username" autocomplete="username" required maxlength="32"></label>
+<label>MySQL password *<input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label>
+<button>Sign in with YubiKey</button></form></section>
+<footer>MySQL verifies both factors. Follow the browser prompt to touch your key; a PIN may be requested by your browser or authenticator.</footer>
+</main></body></html>
