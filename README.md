@@ -1,5 +1,7 @@
 # Browser → MySQL FIDO gateway prototype
 
+See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
+
 A reusable Python transport and three-column Flask demo for this goal:
 
 **A remote user registers their own YubiKey in their browser; MySQL's existing
@@ -25,8 +27,11 @@ The demo never silently switches to application-only WebAuthn authentication.
 Supported prototype profile:
 
 - Password (`caching_sha2_password`) as factor 1; WebAuthn as factor 2.
-- External FIDO2 authenticator, discoverable credential, user presence and user
-  verification required; the browser handles PIN/biometric dialogs locally.
+- External FIDO2 authenticator and discoverable credential. Registration requires
+  user presence and verification (PIN/biometric). Login requires presence (touch)
+  and discourages verification, using the credential ID requested from MySQL
+  when available to avoid credential discovery. If MySQL returns no ID, login
+  uses browser discovery. Browser/key policy may still require a PIN.
 - Packed ES256 attestation with an X.509 attestation certificate (`x5c`). Requesting
   direct attestation does not guarantee the browser will supply it. `none`,
   self-attestation, legacy U2F, and other formats fail with a clear error.
@@ -81,6 +86,22 @@ needed for `SELECT 'hello world'`; grant only the application's actual needs.
 
 ## 2. Install and configure Python
 
+For the local demo, after installing the dependencies below, run `./start.sh`.
+It uses `.venv`, defaults to MySQL at `127.0.0.1:5316`, and explicitly enables
+the local database TLS exception. It prints a temporary administrator token for
+the Create user form. The token changes on each start unless you configure one.
+Stop with Ctrl+C. Install Caddy first; the launcher reloads or starts it to serve
+`https://localhost`. Visits to the local Flask address redirect to that HTTPS URL.
+The default local mode sets `RP_ID=localhost` and
+`BROWSER_ORIGIN=https://localhost`, including when remote example values remain
+exported in your shell. Use `./start.sh --remote` to honor your configured public
+RP ID and browser origin. MySQL's WebAuthn RP ID must match the selected RP ID.
+
+The launcher loads an optional project `.env` file as shell configuration;
+only use a file you control. You can copy `config.example.env` to `.env` and
+customize it. Set `ADMIN_TOKEN=''` to disable provisioning, or set a stable token
+to reuse it. Remote databases still require verified TLS.
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -120,9 +141,16 @@ export ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32)
 export DB_ACCOUNT_HOST=localhost
 ```
 
-The administrator enters this token and the MySQL root password in column 1.
-Without `ADMIN_TOKEN`, that operation is disabled. Root is used only for
-provisioning and never for end-user registration/login. Only `demo_` accounts
+The administrator enters this token and the MySQL root password in the top
+server setup banner to apply and verify the required persistent RP ID and
+connection timeout. The RP ID matches the app's `RP_ID`; the timeout is set to
+at least 180 seconds, preserving larger values. Changing the RP ID can invalidate
+existing registrations. This requires an ACTIVE WebAuthn plugin and privileges
+to run `SET PERSIST`; failed setup may leave some settings applied.
+
+The same credentials authorize account provisioning in column 1.
+Without `ADMIN_TOKEN`, both operations are disabled. Root is used only for
+server setup and provisioning, never for end-user registration/login. Only `demo_` accounts
 can be provisioned. Dropping an existing account is an explicit checkbox;
 root/system accounts cannot be targeted. Dropping removes its grants and MySQL
 registration, **not** passkeys stored on the YubiKey. Delete those manually.
@@ -135,7 +163,7 @@ system. End users do not need it.
 python app.py
 ```
 
-Python listens only at `127.0.0.1:5000`. Do not expose the Flask development server
+Python listens only at `127.0.0.1:5001` (avoiding macOS AirPlay's port 5000). Do not expose the Flask development server
 as the public listener.
 
 ## 3. Put HTTPS in front
@@ -155,9 +183,15 @@ remote user's machine refers to that user's machine, not your server.
 
 For local testing only, use RP ID `localhost`, origin `https://localhost`, and
 `Caddyfile.local`. Trust Caddy's local root CA in the OS/browser rather than
-clicking through certificate warnings. Access port 443, not Flask's port 5000.
+clicking through certificate warnings. Access port 443, not Flask's port 5001.
 
 ## 4. Try the three columns
+
+Use the top server setup banner first if the MySQL RP ID or timeout is not yet
+configured. Each form submission shows progress, SQL commands, and its result
+in the top MySQL activity banner. Passwords and credential responses are redacted;
+bound account parameters appear as placeholders. Authentication itself uses the
+MySQL handshake rather than a SQL login command. Root credentials are not saved.
 
 1. **Administrator:** provision `demo_fido` with a password (or use the DBA-created
    account). Existing accounts are preserved unless the drop checkbox is selected.

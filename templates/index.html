@@ -5,6 +5,23 @@
 <body><main><header><span class="eyebrow">Reusable gateway prototype</span><h1>Your YubiKey. MySQL’s decision.</h1>
 <p>Register and authenticate against MySQL from a remote browser. The browser handles PIN and touch prompts on your device.</p>
 <div class="profile"><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
+<section class="setup-banner" aria-labelledby="setup-title">
+<div class="operation-notifications" aria-label="MySQL notifications" aria-live="polite" role="status">
+<strong>MySQL activity</strong><p id="operation-message">Ready. Choose an action below.</p>
+<pre id="operation-commands" aria-label="Commands sent to MySQL"></pre>
+<small>Commands appear as they are submitted. Passwords and credential responses are redacted; other bound parameters may appear as %s.</small>
+</div>
+<div><span class="step">Server setup · Administrator</span><h2 id="setup-title">Prepare MySQL for browser authentication</h2>
+<p>Sign in as MySQL root to set the server RP ID to <strong>{{ rp_id }}</strong> and connect_timeout to at least <strong>180 seconds</strong>. Settings persist across MySQL restarts; longer timeouts are preserved.</p>
+<small>Changing the RP ID can invalidate existing WebAuthn registrations. Root credentials are used for this operation only and are not saved.</small></div>
+<form data-action="setup" class="setup-form">
+<label>Administrator token *<input name="admin_token" type="password" autocomplete="off" required></label>
+<label>MySQL root password *<input name="root_password" type="password" autocomplete="off" required></label>
+<button {% if not admin_enabled %}disabled{% endif %}>Sign in as root &amp; apply settings</button>
+</form>
+{% if not admin_enabled %}<small>Server setup is disabled. Configure ADMIN_TOKEN and restart the app.</small>{% endif %}
+<div class="status" role="status" aria-live="polite"></div>
+</section>
 <div class="columns">
 <section><span class="step">01 · Administrator</span><h2>Create database user</h2>
 <p>An administrator provisions a real MySQL account with password + WebAuthn factor 2.</p>
@@ -19,7 +36,7 @@
 {% if not admin_enabled %}<small>Provisioning is disabled. Configure ADMIN_TOKEN or have your DBA create the account.</small>{% endif %}
 </form><div class="status" role="status" aria-live="polite"></div></section>
 <section><span class="step">02 · User enrollment</span><h2>Register your YubiKey</h2>
-<p>Use your MySQL username and password. Insert your key into <strong>your computer</strong>, then register it.</p>
+<p>Use the username and <strong>new user password</strong> chosen in column 1. Insert your key into <strong>your computer</strong>, then register it.</p>
 <form data-action="register">
 <label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
 <label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
@@ -27,7 +44,7 @@
 <div class="status" role="status" aria-live="polite"></div>
 <small>Requires a FIDO2 key with discoverable credentials, PIN/user verification, and packed ES256 attestation. Browser prompts stay local; the PIN is never sent to Python.</small></section>
 <section><span class="step">03 · Database login</span><h2>Login · Hello world</h2>
-<p>MySQL checks your password and the signed response from your registered key.</p>
+<p>Enter your MySQL password and touch your registered key. Login requests no PIN; your browser or key policy may still require one.</p>
 <form data-action="login">
 <label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
 <label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>

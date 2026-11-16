@@ -47,14 +47,15 @@ def error(sock, seq, message):
     send(sock, seq, b'\xff\x15\x04#28000' + message.encode())
 
 
-def resultset(sock, columns, values):
+def resultset(sock, columns, values, *, metadata_eof=True):
     seq = 1
     send(sock, seq, bytes([len(columns)])); seq += 1
     for name in columns:
         field = b''.join(lc_bytes(v) for v in [b'def', b'', b'', b'', name.encode(), name.encode()])
         field += b'\x0c\x21\0' + (65535).to_bytes(4, 'little') + b'\xfd\0\0\0\0\0'
         send(sock, seq, field); seq += 1
-    send(sock, seq, b'\xfe\0\0\x02\0'); seq += 1
+    if metadata_eof:
+        send(sock, seq, b'\xfe\0\0\x02\0'); seq += 1
     send(sock, seq, b''.join(lc_bytes(str(v).encode()) for v in values)); seq += 1
     send(sock, seq, b'\xfe\0\0\x02\0')
 
@@ -68,9 +69,13 @@ class FakeMySQL:
         self.port = self.listener.getsockname()[1]
         self.stop = threading.Event()
         self.key = None
+        self.credential_id = None
+        self.credential_id_reply = None
         self.commands = []
         self.fido = True
         self.reject_signature = False
+        self.registration_metadata_eof = False
+        self.query_attributes = False
         self.errors = []
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
@@ -98,6 +103,8 @@ class FakeMySQL:
     def handle(self, sock):
         caps = ClientFlag.get_default() | ClientFlag.MULTI_FACTOR_AUTHENTICATION | ClientFlag.PLUGIN_AUTH
         caps &= ~(ClientFlag.SSL | ClientFlag.COMPRESS | ClientFlag.SESSION_TRACK)
+        if self.query_attributes:
+            caps |= ClientFlag.CLIENT_QUERY_ATTRIBUTES
         nonce = b'01234567890123456789'
         handshake = (b'\x0a8.4.0-protocol-fixture\0' + (987).to_bytes(4, 'little') + nonce[:8] + b'\0'
                      + (caps & 65535).to_bytes(2, 'little') + b'\x2d\x02\0'
@@ -125,6 +132,10 @@ class FakeMySQL:
         else:
             send(sock, 2, b'\x02authentication_webauthn_client\0' + challenge)
             sequence, packet = recv(sock)
+            if packet == b'\x01':
+                body = lc_bytes(self.credential_id) if self.credential_id_reply is None else self.credential_id_reply
+                send(sock, sequence + 1, b'\x01' + body)
+                sequence, packet = recv(sock)
             try:
                 if self.reject_signature:
                     raise ValueError('Intentional test rejection')
@@ -143,11 +154,16 @@ class FakeMySQL:
             if packet[0] == 14:  # COM_PING
                 ok(sock, 1); continue
             assert packet[0] == 3, packet
-            query = packet[1:].decode()
+            query_data = packet[1:]
+            if self.query_attributes:
+                assert query_data[:2] == b'\x00\x01'
+                query_data = query_data[2:]
+            query = query_data.decode()
             self.commands.append(query)
             if 'INITIATE REGISTRATION' in query:
                 encoded = base64.b64encode(challenge + lc_bytes((user + '@localhost').encode())).decode()
-                resultset(sock, ['challenge', 'client_plugin'], [encoded, 'authentication_webauthn_client'])
+                resultset(sock, ['challenge', 'client_plugin'], [encoded, 'authentication_webauthn_client'],
+                          metadata_eof=self.registration_metadata_eof)
             elif 'FINISH REGISTRATION' in query:
                 encoded = re.search(r"AS '([^']+)'", query).group(1)
                 r = Reader(base64.b64decode(encoded)); assert r.take(1) == b'\x03'
@@ -158,6 +174,7 @@ class FakeMySQL:
                 x509.load_der_x509_certificate(cert).public_key().verify(
                     signature, auth + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
                 size = int.from_bytes(auth[53:55], 'big')
+                self.credential_id = auth[55:55 + size]
                 cose = cbor2.loads(auth[55 + size:])
                 self.key = ec.EllipticCurvePublicNumbers(int.from_bytes(cose[-2], 'big'),
                             int.from_bytes(cose[-3], 'big'), ec.SECP256R1()).public_key()

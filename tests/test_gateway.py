@@ -5,18 +5,27 @@ import os
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 import mysql.connector
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker, Flow
-from mysql_fido_gateway.codec import Challenge, Reader, assertion_packet, b64u, lc_bytes, lc_int, registration_packet
+from mysql_fido_gateway.codec import Challenge, Reader, assertion_packet, auth_data, b64u, lc_bytes, lc_int, registration_packet
 from tests.fake_mysql import FakeMySQL
 from tests.software_key import SoftwareKey
 
 
 class CodecTests(unittest.TestCase):
+    def test_presence_required_but_verification_only_required_for_registration(self):
+        import hashlib
+        prefix = hashlib.sha256(b'localhost').digest()
+        auth_data(prefix + b'\x01' + bytes(4), 'localhost')
+        with self.assertRaisesRegex(BridgeError, 'presence'):
+            auth_data(prefix + b'\x04' + bytes(4), 'localhost')
+        with self.assertRaisesRegex(BridgeError, 'verification'):
+            auth_data(prefix + b'\x41' + bytes(4), 'localhost', registration=True)
+
     def setUp(self):
         self.challenge = Challenge(1, bytes(range(32)), 'localhost', b'demo_test@localhost')
         self.key = SoftwareKey()
@@ -99,6 +108,58 @@ class ProtocolTests(unittest.TestCase):
         finish = next(i for i,q in enumerate(self.server.commands) if 'FINISH' in q)
         self.assertEqual(finish, initiate + 1)  # no sandbox SET/PING between steps
 
+    def test_registration_with_conventional_metadata_eof(self):
+        self.server.registration_metadata_eof = True
+        self.assertTrue(self.gateway.register('demo_test', 'correct-password', self.key)['registered'])
+
+    def test_touch_only_login_uses_mysql_credential_id(self):
+        self.assertEqual(self.gateway.rp_id, 'localhost')
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        self.key.user_verified = False
+        def touch_only(operation, options):
+            self.assertEqual(operation, 'get')
+            self.assertEqual(options['userVerification'], 'discouraged')
+            self.assertEqual(options['allowCredentials'], [{'type': 'public-key', 'id': b64u(self.key.credential_id)}])
+            return self.key(operation, options)
+        with self.gateway.connect('demo_test', 'correct-password', touch_only) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version")
+                self.assertEqual(cursor.fetchone()[0], 'hello world')
+
+    def test_login_without_server_credential_id_uses_browser_discovery(self):
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        for body in (b'', b'\x00'):
+            with self.subTest(body=body):
+                self.server.credential_id_reply = body
+                def discover(operation, options):
+                    self.assertNotIn('allowCredentials', options)
+                    self.assertEqual(options['userVerification'], 'discouraged')
+                    return self.key(operation, options)
+                self.gateway.connect('demo_test', 'correct-password', discover).close()
+
+    def test_malformed_credential_id_response_is_rejected(self):
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        self.server.credential_id_reply = b'\x10short'
+        browser = MagicMock()
+        with self.assertRaisesRegex(BridgeError, 'Malformed MySQL credential-ID response'):
+            self.gateway.connect('demo_test', 'correct-password', browser)
+        browser.assert_not_called()
+
+    def test_registration_with_query_attributes_capability(self):
+        self.server.query_attributes = True
+        self.assertTrue(self.gateway.register('demo_test', 'correct-password', self.key)['registered'])
+
+    def test_standard_query_reader_reproduces_missing_metadata_eof_error(self):
+        from mysql_fido_gateway.mysql_bridge import BrowserConnection, Exchange
+        connection = BrowserConnection(Exchange('https://localhost', 'localhost', self.key, registering=True),
+                                       user='demo_test', password1='correct-password', **self.gateway.db_config)
+        try:
+            with self.assertRaisesRegex(mysql.connector.InterfaceError, 'Expected EOF packet') as caught:
+                connection.cmd_query('ALTER USER USER() 2 FACTOR INITIATE REGISTRATION')
+            self.assertEqual(caught.exception.errno, -1)
+        finally:
+            connection.shutdown()
+
     def test_password_rejected_by_mysql(self):
         with self.assertRaises(mysql.connector.Error):
             self.gateway.register('demo_test', 'wrong', self.key)
@@ -132,6 +193,81 @@ class ProtocolTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
+    def test_admin_setup_and_redacted_command_events(self):
+        from app import create_app
+        for timeout in (10, 300):
+            with self.subTest(timeout=timeout):
+                with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
+                                             'ADMIN_TOKEN': 'test-admin-token'}):
+                    app = create_app(gateway=object())
+                    client = app.test_client()
+                    client.get('/', base_url='https://localhost')
+                    with client.session_transaction() as s:
+                        csrf = s['csrf']
+                    headers = {'Origin': 'https://localhost', 'X-CSRF-Token': csrf}
+                    payload = {'action': 'setup', 'root_password': 'test-root-password',
+                               'admin_token': 'test-admin-token'}
+                    cursor = MagicMock()
+                    cursor.fetchone.side_effect = [('ACTIVE',), ('old.example.com', timeout),
+                                                   ('localhost', max(180, timeout))]
+                    connection = MagicMock()
+                    connection.cursor.return_value.__enter__.return_value = cursor
+                    with patch('app.mysql.connector.connect', return_value=connection) as connect:
+                        rejected = client.post('/api/flows', base_url='https://localhost', headers=headers,
+                                               json={**payload, 'admin_token': 'wrong'})
+                        self.assertEqual(rejected.status_code, 403)
+                        connect.assert_not_called()
+                        response = client.post('/api/flows', base_url='https://localhost', headers=headers, json=payload)
+                        self.assertEqual(response.status_code, 202)
+                        events = []
+                        for _ in range(10):
+                            event = client.get('/api/flows/' + response.json['flow_id'],
+                                               base_url='https://localhost').json
+                            events.append(event)
+                            if event['type'] in {'success', 'error'}:
+                                break
+                    self.assertEqual(events[-1]['type'], 'success')
+                    self.assertEqual(len([e for e in events if e['type'] == 'command']), 5)
+                    cursor.execute.assert_has_calls([
+                        call('SET PERSIST authentication_webauthn_rp_id = %s', ('localhost',)),
+                        call('SET PERSIST connect_timeout = %s', (max(180, timeout),))], any_order=False)
+                    connection.close.assert_called_once()
+                    with client.session_transaction() as s:
+                        visible = json.dumps(dict(s)) + json.dumps(events)
+                    self.assertNotIn('test-root-password', visible)
+                    self.assertNotIn('test-admin-token', visible)
+
+    def test_admin_setup_reports_mysql_failure(self):
+        from app import create_app
+        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
+                                     'ADMIN_TOKEN': 'test-admin-token'}):
+            client = create_app(gateway=object()).test_client()
+            client.get('/', base_url='https://localhost')
+            with client.session_transaction() as s:
+                csrf = s['csrf']
+            with patch('app.mysql.connector.connect', side_effect=mysql.connector.Error('secret detail', errno=1045)):
+                response = client.post('/api/flows', base_url='https://localhost',
+                                       headers={'Origin': 'https://localhost', 'X-CSRF-Token': csrf},
+                                       json={'action': 'setup', 'admin_token': 'test-admin-token',
+                                             'root_password': 'test-root-password'})
+                event = client.get('/api/flows/' + response.json['flow_id'], base_url='https://localhost').json
+            self.assertEqual(event['type'], 'error')
+            self.assertIn('1045', event['message'])
+            self.assertNotIn('secret detail', event['message'])
+
+    def test_local_navigation_redirects_to_https_origin(self):
+        from app import create_app
+        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+            client = create_app(gateway=object()).test_client()
+        for address in ('http://127.0.0.1:5001', 'http://localhost:5001'):
+            response = client.get('/', base_url=address)
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.headers['Location'], 'https://localhost/')
+        self.assertEqual(client.get('/', base_url='https://localhost').status_code, 200)
+        self.assertEqual(client.get('/', base_url='https://evil.example').status_code, 400)
+        self.assertEqual(client.post('/api/flows', base_url='http://127.0.0.1:5001',
+                                     json={}).status_code, 403)
+
     def test_origin_csrf_and_cross_session(self):
         from app import create_app
         with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
@@ -176,7 +312,7 @@ class WebProtocolTests(unittest.TestCase):
                         reply = browser.post(path + '/respond', base_url='https://localhost', headers=headers,
                                              json={'request_id': event['request_id'], 'credential': credential})
                         self.assertEqual(reply.status_code, 200)
-                    else: return event
+                    elif event['type'] != 'command': return event
                 self.fail('HTTP ceremony did not finish')
             self.assertEqual(action('register')['type'], 'success')
             result = action('login')
@@ -184,7 +320,10 @@ class WebProtocolTests(unittest.TestCase):
             self.assertEqual(result['result']['mysql_account'], 'demo_test@localhost')
             server.reject_signature = True
             self.assertEqual(action('login')['type'], 'error')
-            self.assertEqual(action('login', 'wrong')['type'], 'error')
+            denied = action('login', 'wrong')
+            self.assertEqual(denied['type'], 'error')
+            self.assertIn('Access denied before any SQL command was sent', denied['message'])
+            self.assertIn('new user password', denied['message'])
         finally:
             server.close()
         self.assertEqual(server.errors, [])

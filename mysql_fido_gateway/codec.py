@@ -125,7 +125,7 @@ class Challenge:
                                           'userVerification': 'required'},
             }
         return {'challenge': b64u(self.salt), 'rpId': self.rp_id,
-                'timeout': 120000, 'userVerification': 'required'}
+                'timeout': 120000, 'userVerification': 'discouraged'}
 
 
 def client_data(credential, challenge, origin, ceremony):
@@ -150,8 +150,10 @@ def auth_data(raw, rp_id, registration=False):
     if raw[:32] != hashlib.sha256(rp_id.encode('ascii')).digest():
         raise BridgeError('Authenticator RP ID hash mismatch')
     flags = raw[32]
-    if flags & 5 != 5:
-        raise BridgeError('User presence and verification are required')
+    if not flags & 1:
+        raise BridgeError('User presence is required')
+    if registration and not flags & 4:
+        raise BridgeError('User verification is required for registration')
     if registration and not flags & 64:
         raise BridgeError('Attested credential data is missing')
 

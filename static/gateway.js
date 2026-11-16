@@ -1,6 +1,13 @@
 /* Framework-free browser transport; no CDN and no PIN handling in application JS. */
 'use strict';
 const csrf = document.querySelector('meta[name=csrf-token]').content;
+const operationMessage = document.querySelector('#operation-message');
+const operationCommands = document.querySelector('#operation-commands');
+let activeOperation = false;
+function notify(message, state = '') {
+  operationMessage.textContent = message;
+  operationMessage.className = state;
+}
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 function decode(value) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -46,8 +53,16 @@ async function jsonRequest(url, body) {
   return result;
 }
 for (const form of document.querySelectorAll('form')) {
+  form.addEventListener('invalid', event => {
+    notify(`Complete the required field: ${event.target.labels?.[0]?.textContent.trim() || event.target.name}. No command was sent.`, 'error');
+  }, true);
   form.addEventListener('submit', async event => {
     event.preventDefault();
+    if (activeOperation) {
+      notify('An operation is already running. Wait for it to finish.', 'error');
+      return;
+    }
+    activeOperation = true;
     const panel = form.closest('section');
     const status = panel.querySelector('.status');
     const proof = panel.querySelector('.proof');
@@ -58,10 +73,13 @@ for (const form of document.querySelectorAll('form')) {
     if (proof) proof.textContent = '';
     status.className = 'status';
     status.textContent = 'Starting MySQL operation…';
+    operationCommands.textContent = '';
+    notify(`${form.querySelector('button').textContent.trim()}: connecting to MySQL…`);
+    operationMessage.closest('.operation-notifications').scrollIntoView({behavior: 'smooth', block: 'start'});
     button.disabled = true;
     form.querySelectorAll('input[type=password]').forEach(input => input.value = '');
     try {
-      if (payload.action !== 'create' && (!window.isSecureContext || !window.PublicKeyCredential)) {
+      if (['register', 'login'].includes(payload.action) && (!window.isSecureContext || !window.PublicKeyCredential)) {
         throw new Error('Open this page over trusted HTTPS in a browser supporting WebAuthn.');
       }
       const {flow_id} = await jsonRequest('/api/flows', payload);
@@ -72,8 +90,14 @@ for (const form of document.querySelectorAll('form')) {
       while (Date.now() < deadline) {
         const message = await jsonRequest('/api/flows/' + flow_id);
         if (message.type === 'waiting') { await wait(150); continue; }
+        if (message.type === 'command') {
+          operationCommands.textContent += message.sql + ';\n';
+          notify('Submitting command to MySQL…');
+          continue;
+        }
         if (message.type === 'webauthn') {
           status.textContent = 'Follow your browser’s security-key prompt. Insert and touch your YubiKey; enter its PIN there if asked.';
+          notify(status.textContent);
           let reply;
           try {
             const credential = message.operation === 'create'
@@ -90,6 +114,7 @@ for (const form of document.querySelectorAll('form')) {
           finished = true;
           status.className = 'status success';
           status.textContent = message.result.message || 'MySQL accepted the operation.';
+          notify(status.textContent, 'success');
           if (proof) proof.textContent = JSON.stringify(message.result, null, 2);
           break;
         } else if (message.type === 'error') { throw new Error(message.message); }
@@ -98,6 +123,11 @@ for (const form of document.querySelectorAll('form')) {
     } catch (error) {
       status.className = 'status error';
       status.textContent = error.message;
-    } finally { button.disabled = false; }
+      notify(error.message, 'error');
+    } finally {
+      payload.password = payload.root_password = payload.admin_token = '';
+      activeOperation = false;
+      button.disabled = false;
+    }
   });
 }

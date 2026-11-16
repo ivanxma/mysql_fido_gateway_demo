@@ -1,0 +1,35 @@
+sequenceDiagram
+    autonumber
+    participant K as YubiKey
+    participant B as Browser
+    participant G as Gateway worker
+    participant M as MySQL
+
+    B->>G: Start login with username and account password
+    G->>M: Open connection and authenticate password factor 1
+    activate M
+    M-->>G: Fresh WebAuthn factor-2 challenge
+    G->>M: Credential-ID request
+    M-->>G: AuthMoreData - credential ID or empty response
+    G-->>B: WebAuthn get options through the owner-bound flow
+    Note over B,G: Use allowCredentials when an ID is present or discover otherwise
+    B->>K: Request assertion - touch, and verification if required
+    K-->>B: Signed assertion
+    Note over K,B: Private key and PIN stay local
+    B->>G: Serialized assertion and one-use request_id
+    G->>G: Check origin, challenge, RP hash and user presence
+    G->>M: Encoded assertion with original signed client data
+
+    alt MySQL accepts the authentication
+        M-->>G: Authentication OK
+        Note over G,M: Normal session setup is now allowed
+        G->>M: SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version
+        M-->>G: Query result under the authenticated account
+        G->>M: Close the user's connection
+        G-->>B: Success and query result
+    else MySQL rejects the authentication
+        M-->>G: Authentication error
+        G->>M: Close the failed connection
+        G-->>B: Error event - no proof query
+    end
+    deactivate M

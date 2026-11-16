@@ -7,7 +7,7 @@ import threading
 from urllib.parse import urlsplit
 
 import mysql.connector
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
@@ -24,7 +24,8 @@ def create_app(gateway=None):
     app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=True,
                       SESSION_COOKIE_SAMESITE='Strict', MAX_CONTENT_LENGTH=131072,
-                      TRUSTED_HOSTS=[urlsplit(origin).hostname])
+                      TRUSTED_HOSTS=([urlsplit(origin).hostname, '127.0.0.1']
+                                     if origin == 'https://localhost' else [urlsplit(origin).hostname]))
     db_config = {'host': os.environ.get('DB_HOST', '127.0.0.1'),
                  'port': int(os.environ.get('DB_PORT', '5316')),
                  'connection_timeout': 10, 'read_timeout': 180, 'write_timeout': 15}
@@ -37,6 +38,12 @@ def create_app(gateway=None):
 
     @app.before_request
     def protect():
+        # The development server prints its loopback URL. Send navigation from
+        # that address to the HTTPS origin needed by WebAuthn and secure cookies.
+        # Caddy preserves Host: localhost, so proxied visits do not redirect.
+        if (origin == 'https://localhost' and request.method in {'GET', 'HEAD'}
+                and request.host != 'localhost'):
+            return redirect(origin + '/', code=302)
         session.setdefault('owner', secrets.token_urlsafe(32))
         session.setdefault('csrf', secrets.token_urlsafe(32))
         if request.method == 'POST':
@@ -67,21 +74,21 @@ def create_app(gateway=None):
         if not isinstance(body, dict):
             return jsonify(error='Expected a JSON object'), 400
         action, username, password = (body.get(k) for k in ('action', 'username', 'password'))
-        if action not in {'create', 'register', 'login'}:
+        if action not in {'setup', 'create', 'register', 'login'}:
             return jsonify(error='Unknown action'), 400
-        if not isinstance(username, str) or not re.fullmatch(r'[A-Za-z0-9_]{1,32}', username):
+        if action != 'setup' and (not isinstance(username, str) or not re.fullmatch(r'[A-Za-z0-9_]{1,32}', username)):
             return jsonify(error='Use a MySQL username of 1–32 letters, numbers, or underscores'), 400
-        if username.lower() == 'root':
+        if action != 'setup' and username.lower() == 'root':
             return jsonify(error='Root is not an end-user login in this demo'), 400
-        if not isinstance(password, str) or not password or len(password) > 1024:
+        if action != 'setup' and (not isinstance(password, str) or not password or len(password) > 1024):
             return jsonify(error='Enter a database password'), 400
         admin_password = None
-        if action == 'create':
+        if action in {'setup', 'create'}:
             expected = os.environ.get('ADMIN_TOKEN', '')
             supplied = body.get('admin_token', '')
             if not expected or not isinstance(supplied, str) or not secrets.compare_digest(expected.encode('utf-8'), supplied.encode('utf-8')):
-                return jsonify(error='Account provisioning requires the configured administrator token'), 403
-            if not username.startswith('demo_'):
+                return jsonify(error='Administrator operations require the configured administrator token'), 403
+            if action == 'create' and not username.startswith('demo_'):
                 return jsonify(error='Provisioning is restricted to demo_ usernames'), 400
             admin_password = body.get('root_password')
             if not isinstance(admin_password, str) or not admin_password:
@@ -92,32 +99,58 @@ def create_app(gateway=None):
         def worker():
             connection = None
             dropped = False
+            command_started = False
+            def report_command(sql):
+                nonlocal command_started
+                command_started = True
+                flow.events.put_nowait({'type': 'command', 'sql': sql})
+
+            def execute(cursor, sql, params=None, display=None):
+                report_command(display or sql)
+                if params is None:
+                    return cursor.execute(sql)
+                return cursor.execute(sql, params)
+
             try:
-                if action == 'create':
+                if action in {'setup', 'create'}:
                     connection = mysql.connector.connect(user='root', password=admin_password,
                                                          use_pure=True, **db_config)
                     with connection.cursor() as cursor:
-                        cursor.execute("SELECT PLUGIN_STATUS FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='authentication_webauthn'")
+                        execute(cursor, "SELECT PLUGIN_STATUS FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='authentication_webauthn'")
                         if cursor.fetchone() != ('ACTIVE',):
-                            raise BridgeError('MySQL WebAuthn plugin is not ACTIVE; nothing was dropped')
-                        cursor.execute('SELECT @@GLOBAL.authentication_webauthn_rp_id, @@GLOBAL.connect_timeout')
+                            raise BridgeError('MySQL WebAuthn plugin is not ACTIVE; no changes were made')
+                        execute(cursor, 'SELECT @@GLOBAL.authentication_webauthn_rp_id, @@GLOBAL.connect_timeout')
                         server_rp, timeout = cursor.fetchone()
-                        if server_rp != rp_id or timeout < 150:
-                            raise BridgeError('Set MySQL RP ID to RP_ID and connect_timeout >= 150 before provisioning')
-                        host = os.environ.get('DB_ACCOUNT_HOST', 'localhost')
-                        if reset:
-                            cursor.execute('DROP USER IF EXISTS %s@%s', (username, host))
-                            dropped = True
-                        cursor.execute('CREATE USER %s@%s IDENTIFIED WITH caching_sha2_password BY %s '
-                                       'AND IDENTIFIED WITH authentication_webauthn', (username, host, password))
-                    result = {'message': f'Created {username}@{host}. Register its YubiKey next.'}
+                        if action == 'setup':
+                            execute(cursor, 'SET PERSIST authentication_webauthn_rp_id = %s', (rp_id,),
+                                    display=f'SET PERSIST authentication_webauthn_rp_id = {rp_id!r}')
+                            execute(cursor, 'SET PERSIST connect_timeout = %s', (max(180, timeout),),
+                                    display=f'SET PERSIST connect_timeout = {max(180, timeout)}')
+                            execute(cursor, 'SELECT @@GLOBAL.authentication_webauthn_rp_id, @@GLOBAL.connect_timeout')
+                            verified_rp, verified_timeout = cursor.fetchone()
+                            if verified_rp != rp_id or verified_timeout < 150:
+                                raise BridgeError('MySQL settings verification failed; check the server settings before retrying')
+                            result = {'message': f'MySQL is ready. RP ID: {verified_rp}; connect_timeout: {verified_timeout}s. Create a user below.',
+                                      'rp_id': verified_rp, 'connect_timeout': verified_timeout}
+                        else:
+                            if server_rp != rp_id or timeout < 150:
+                                raise BridgeError('Use the server setup banner above to set the MySQL RP ID and connection timeout')
+                            host = os.environ.get('DB_ACCOUNT_HOST', 'localhost')
+                            if reset:
+                                execute(cursor, 'DROP USER IF EXISTS %s@%s', (username, host))
+                                dropped = True
+                            execute(cursor, 'CREATE USER %s@%s IDENTIFIED WITH caching_sha2_password BY %s '
+                                           'AND IDENTIFIED WITH authentication_webauthn', (username, host, password),
+                                    display="CREATE USER %s@%s IDENTIFIED WITH caching_sha2_password BY '<redacted>' "
+                                            'AND IDENTIFIED WITH authentication_webauthn')
+                            result = {'message': f'Created {username}@{host}. Register its YubiKey next.'}
                 elif action == 'register':
-                    result = gateway.register(username, password, flow.ask)
+                    result = gateway.register(username, password, flow.ask, on_command=report_command)
                     result['message'] = 'MySQL accepted registration. Test login next.'
                 else:
                     connection = gateway.connect(username, password, flow.ask)
                     with connection.cursor() as cursor:
-                        cursor.execute("SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version")
+                        execute(cursor, "SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version")
                         row = cursor.fetchone()
                     result = {'message': row[0], 'mysql_account': row[1], 'connection_id': row[2],
                               'server_version': row[3], 'verified_by': 'MySQL authentication OK + SQL query'}
@@ -126,8 +159,27 @@ def create_app(gateway=None):
                 flow.finish({'type': 'error', 'message': str(error)})
             except mysql.connector.Error as error:
                 # Do not return connector SQL text or passwords in error messages.
-                app.logger.warning('MySQL operation failed: errno=%s action=%s', error.errno, action)
-                message = f'MySQL rejected {action} (error {error.errno}). '
+                stage = 'SQL execution' if command_started else 'database authentication'
+                app.logger.warning('MySQL operation failed: errno=%s class=%s action=%s stage=%s',
+                                   error.errno, type(error).__name__, action, stage)
+                if error.errno == -1:
+                    message = f'Connector/Python failed during {action} ({type(error).__name__}; code -1). '
+                    safe_details = {'Expected EOF packet', 'Failed parsing EOF packet.',
+                                    'Failed parsing column information', 'Illegal result set', 'Empty response'}
+                    if error.msg in safe_details:
+                        message += error.msg + '. '
+                else:
+                    message = f'MySQL rejected {action} (error {error.errno}). '
+                if error.errno == 1045 and not command_started:
+                    if action in {'register', 'login'}:
+                        message += ('Access denied before any SQL command was sent. Enter the MySQL username '
+                                    'and the new user password chosen in Create database user. '
+                                    'The root password and administrator token do not authenticate this account. '
+                                    'If those credentials are correct, ask the administrator to check the account host and authentication configuration. ')
+                    else:
+                        message += 'Access denied while connecting as root. Check the MySQL root password and root account host. '
+                if action == 'setup':
+                    message += 'Setup may be partially applied. Check root privileges, SET PERSIST support, and the server settings before retrying. '
                 if dropped:
                     message += 'The old account was dropped; recreation failed. '
                 message += ('Check the server error log, RP/origin compatibility, attestation support, '
@@ -165,4 +217,4 @@ def create_app(gateway=None):
 
 if __name__ == '__main__':
     # HTTPS terminates at the configured reverse proxy, never at a remote terminal.
-    create_app().run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    create_app().run(host='127.0.0.1', port=5001, debug=False, threaded=True)

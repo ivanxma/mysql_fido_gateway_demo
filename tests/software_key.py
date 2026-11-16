@@ -18,6 +18,7 @@ class SoftwareKey:
         self.attestation_key = ec.generate_private_key(ec.SECP256R1())
         self.credential_id = bytes(range(64))
         self.counter = 0
+        self.user_verified = True
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'TEST KEY ONLY')])
         now = datetime.datetime.now(datetime.timezone.utc)
         self.cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
@@ -33,7 +34,8 @@ class SoftwareKey:
         client = json.dumps({'type': 'webauthn.create' if create else 'webauthn.get',
                              'challenge': options['challenge'], 'origin': 'https://localhost',
                              'crossOrigin': False, 'extra_browser_field': 'preserved'}).encode()
-        raw = hashlib.sha256(b'localhost').digest() + bytes([0x45 if create else 5]) + self.counter.to_bytes(4, 'big')
+        flags = 0x45 if create else (5 if self.user_verified else 1)
+        raw = hashlib.sha256(b'localhost').digest() + bytes([flags]) + self.counter.to_bytes(4, 'big')
         if create:
             numbers = self.key.public_key().public_numbers()
             cose = {1: 2, 3: -7, -1: 1, -2: numbers.x.to_bytes(32, 'big'), -3: numbers.y.to_bytes(32, 'big')}

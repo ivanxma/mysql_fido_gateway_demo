@@ -1,5 +1,5 @@
 # Replace with a DNS name you control and use the same name for RP_ID.
 # Point DNS here and allow HTTPS/TLS certificate issuance as required by Caddy.
 demo.example.com {
-    reverse_proxy 127.0.0.1:5000
+    reverse_proxy 127.0.0.1:5001
 }

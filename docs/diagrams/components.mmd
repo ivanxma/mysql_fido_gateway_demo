@@ -1,0 +1,18 @@
+flowchart LR
+    Key[YubiKey<br/>Local PIN and private key]
+    Browser[Browser<br/>WebAuthn and polling]
+    App[Gateway service<br/>Flask and adapter]
+    Flow[Broker and Flow<br/>Owner and response token]
+    Database[MySQL<br/>Factors and grants]
+
+    Key <-->|Local create and sign| Browser
+    Browser <-->|HTTPS on port 443| App
+    App <-->|Per-user DB connection<br/>Remote database TLS| Database
+    App <-->|Owner-bound<br/>options and replies| Flow
+
+    classDef user fill:#eef6f3,stroke:#47736b,color:#25342f;
+    classDef service fill:#fcfaf7,stroke:#c74634,color:#312d2a;
+    classDef database fill:#f0ece6,stroke:#625d58,color:#312d2a;
+    class Browser,Key user;
+    class App,Flow service;
+    class Database database;

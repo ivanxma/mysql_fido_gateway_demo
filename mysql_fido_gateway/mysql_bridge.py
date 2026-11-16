@@ -9,9 +9,11 @@ from typing import Callable
 import mysql.connector
 from mysql.connector.authentication import MySQLAuthenticator
 from mysql.connector.connection import MySQLConnection
+from mysql.connector.constants import ClientFlag, ServerCmd
+from mysql.connector.errors import get_exception
 from mysql.connector.plugins import MySQLAuthPlugin
 
-from .codec import BridgeError, Challenge, assertion_packet, registration_packet
+from .codec import BridgeError, Challenge, Reader, assertion_packet, b64u, registration_packet
 
 TESTED_CONNECTOR = '26.10.0'
 
@@ -48,6 +50,33 @@ class BrowserPlugin(MySQLAuthPlugin):
                               'An administrator must explicitly unregister it before replacement.')
         challenge = Challenge.parse(auth_data)
         options = challenge.options(exchange.rp_id)
+        # Request the stored credential ID from MySQL, as the native client's
+        # non-discovery path does. A concrete allow-list avoids resident-key
+        # discovery, which can require PIN even when UV is discouraged.
+        sock.send(b'\x01')
+        credential_packet = bytes(sock.recv())
+        if len(credential_packet) < 5:
+            raise BridgeError('Incomplete MySQL credential-ID response')
+        if credential_packet[4] == 0xff:
+            raise get_exception(credential_packet)
+        if credential_packet[4] != 0x01:
+            raise BridgeError('Expected MySQL AuthMoreData for credential-ID response')
+        # Connector's auth_more_response normally receives packet[5:], with
+        # both the four-byte header and AuthMoreData tag already removed.
+        body = credential_packet[5:]
+        credential_id = b''
+        if body:
+            try:
+                reader = Reader(body)
+                credential_id = reader.blob()
+                reader.end()
+            except BridgeError as error:
+                raise BridgeError('Malformed MySQL credential-ID response') from error
+        # MySQL may omit the ID for resident credentials. Browser discovery is
+        # then necessary, and browser/key policy may require PIN despite UV
+        # being discouraged. Never invent a credential ID or alter signed data.
+        if credential_id:
+            options['allowCredentials'] = [{'type': 'public-key', 'id': b64u(credential_id)}]
         credential = exchange.ask('get', options)
         payload = assertion_packet(credential, challenge, exchange.origin)
         sock.send(payload)
@@ -76,6 +105,39 @@ class BrowserAuthenticator(MySQLAuthenticator):
 
 
 class BrowserConnection(MySQLConnection):
+    def initiate_registration(self):
+        """Read INITIATE's special result, which can omit the metadata EOF.
+
+        sql_user.cc sends this result with SEND_NUM_ROWS, without SEND_EOF.
+        Keep this exception local to registration; normal SQL uses the connector.
+        """
+        query = b'ALTER USER USER() 2 FACTOR INITIATE REGISTRATION'
+        if self._client_flags & ClientFlag.CLIENT_QUERY_ATTRIBUTES:
+            query = b'\x00\x01' + query  # zero attributes, one parameter set
+        packet = self._send_cmd(ServerCmd.QUERY, query)
+        if packet[4] == 0xff:
+            raise get_exception(packet)
+        if self._protocol.parse_column_count(packet) != 2:
+            raise BridgeError('Unexpected INITIATE result shape; expected two columns')
+        for _ in range(2):
+            column = self._socket.recv(self._read_timeout)
+            if column[4] == 0xff:
+                raise get_exception(column)
+            self._protocol.parse_column(column, self.python_charset)
+        packet = self._socket.recv(self._read_timeout)
+        # Also accept conventional result sets with a metadata EOF separator.
+        if packet[4] == 0xfe and len(packet) < 13:
+            self._handle_eof(packet)
+            packet = self._socket.recv(self._read_timeout)
+        if packet[4] == 0xff:
+            raise get_exception(packet)
+        row = Reader(packet[4:])
+        values = (row.blob(), row.blob())
+        row.end()
+        eof = self._socket.recv(self._read_timeout)
+        self._handle_eof(eof)
+        return values
+
     def __init__(self, exchange, **config):
         super().__init__()
         self.exchange = exchange
@@ -113,7 +175,10 @@ class Gateway:
         if not (allow_loopback_plaintext and host in {'127.0.0.1', '::1', 'localhost'}):
             if self.db_config.get('ssl_disabled') or not (self.db_config.get('ssl_ca') and self.db_config.get('ssl_verify_cert')
                     and self.db_config.get('ssl_verify_identity')):
-                raise BridgeError('Remote MySQL requires a CA and certificate/hostname verification')
+                if host in {'127.0.0.1', '::1', 'localhost'}:
+                    raise BridgeError('Local MySQL requires verified TLS or the explicit development setting '
+                                      'ALLOW_LOOPBACK_DB_PLAINTEXT=1')
+                raise BridgeError('Remote MySQL requires DB_SSL_CA and certificate/hostname verification')
         if any(key in self.db_config for key in ('user', 'password', 'password1', 'pool_name', 'pool_size', 'database')):
             raise BridgeError('Gateway configuration must not contain shared credentials, pools, or an initial database')
 
@@ -122,22 +187,14 @@ class Gateway:
         exchange = Exchange(self.origin, self.rp_id, ask)
         return BrowserConnection(exchange, user=username, password1=password, **self.db_config)
 
-    def register(self, username, password, ask):
+    def register(self, username, password, ask, *, on_command=None):
         """Run INITIATE and FINISH on the same restricted connection; no key stored here."""
         exchange = Exchange(self.origin, self.rp_id, ask, registering=True)
         connection = BrowserConnection(exchange, user=username, password1=password, **self.db_config)
         try:
-            result = connection.cmd_query('ALTER USER USER() 2 FACTOR INITIATE REGISTRATION')
-            if 'columns' not in result:
-                raise BridgeError('INITIATE did not return a registration challenge result set')
-            rows, _ = connection.get_rows()
-            if len(rows) != 1:
-                raise BridgeError('Unexpected registration challenge row count')
-            # Native mysql client uses column 0=base64 challenge, 1=plugin name.
-            # Fail on a different result shape instead of guessing a challenge.
-            if len(rows[0]) != 2:
-                raise BridgeError('Unexpected INITIATE result shape; this server needs a protocol adapter')
-            encoded, plugin = rows[0]
+            if on_command:
+                on_command('ALTER USER USER() 2 FACTOR INITIATE REGISTRATION')
+            encoded, plugin = connection.initiate_registration()
             if isinstance(plugin, bytes):
                 plugin = plugin.decode('ascii')
             if plugin != 'authentication_webauthn_client':
@@ -147,6 +204,8 @@ class Gateway:
             credential = ask('create', options)
             response = registration_packet(credential, challenge, self.origin)
             # base64 alphabet contains no SQL quote/backslash characters.
+            if on_command:
+                on_command("ALTER USER USER() 2 FACTOR FINISH REGISTRATION SET CHALLENGE_RESPONSE AS '<redacted>'")
             result = connection.cmd_query(
                 "ALTER USER USER() 2 FACTOR FINISH REGISTRATION "
                 "SET CHALLENGE_RESPONSE AS '" + response + "'"

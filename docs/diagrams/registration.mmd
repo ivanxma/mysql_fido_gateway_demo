@@ -1,0 +1,26 @@
+sequenceDiagram
+    autonumber
+    participant K as YubiKey
+    participant B as Browser
+    participant G as Gateway worker
+    participant M as MySQL
+
+    B->>G: Start registration with username and account password
+    G->>M: Open connection and authenticate password factor 1
+    activate M
+    M-->>G: WebAuthn factor 2 pending - registration sandbox
+    Note over G,M: Keep this same connection open through INITIATE and FINISH
+    G->>M: INITIATE REGISTRATION
+    M-->>G: Challenge, RP/account data and client plugin name
+    G-->>B: WebAuthn create options through the owner-bound flow
+    B->>K: Create credential - local PIN/verification and touch
+    K-->>B: Credential and attestation
+    Note over K,B: PIN and private key are not posted to the gateway
+    B->>G: Serialized credential and one-use request_id
+    G->>G: Check origin, challenge, RP hash, presence and verification
+    G->>M: FINISH REGISTRATION with encoded attestation
+    M-->>G: OK or registration rejection
+    G->>M: Close registration connection
+    deactivate M
+    G-->>B: Final success or error event
+    Note over B,G: Success is reported only after MySQL accepts FINISH
