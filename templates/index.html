@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>MySQL · Browser FIDO Gateway</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/gateway.js" defer></script></head>
+<body><main><header><span class="eyebrow">Reusable gateway prototype</span><h1>Your YubiKey. MySQL’s decision.</h1>
+<p>Register and authenticate against MySQL from a remote browser. The browser handles PIN and touch prompts on your device.</p>
+<div class="profile"><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
+<div class="columns">
+<section><span class="step">01 · Administrator</span><h2>Create database user</h2>
+<p>An administrator provisions a real MySQL account with password + WebAuthn factor 2.</p>
+<form data-action="create">
+<label>Administrator token<input name="admin_token" type="password" autocomplete="off" required></label>
+<label>MySQL root password<input name="root_password" type="password" autocomplete="off" required></label>
+<label>New username<input name="username" value="demo_fido" pattern="demo_[A-Za-z0-9_]+" maxlength="32" autocomplete="off" required></label>
+<label>New user password<input name="password" type="password" autocomplete="new-password" required></label>
+<label class="check"><input name="reset" type="checkbox">Drop this demo account first if it exists</label>
+<small>Dropping removes grants and server registration. Passkeys on the YubiKey are deleted manually.</small>
+<button {% if not admin_enabled %}disabled{% endif %}>Create MySQL user</button>
+{% if not admin_enabled %}<small>Provisioning is disabled. Configure ADMIN_TOKEN or have your DBA create the account.</small>{% endif %}
+</form><div class="status" role="status" aria-live="polite"></div></section>
+<section><span class="step">02 · User enrollment</span><h2>Register your YubiKey</h2>
+<p>Use your MySQL username and password. Insert your key into <strong>your computer</strong>, then register it.</p>
+<form data-action="register">
+<label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
+<label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
+<button>Register in browser</button></form>
+<div class="status" role="status" aria-live="polite"></div>
+<small>Requires a FIDO2 key with discoverable credentials, PIN/user verification, and packed ES256 attestation. Browser prompts stay local; the PIN is never sent to Python.</small></section>
+<section><span class="step">03 · Database login</span><h2>Login · Hello world</h2>
+<p>MySQL checks your password and the signed response from your registered key.</p>
+<form data-action="login">
+<label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
+<label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
+<button>Authenticate to MySQL</button></form>
+<div class="status" role="status" aria-live="polite"></div><pre class="proof"></pre>
+<small>Success requires MySQL authentication OK and <code>SELECT 'hello world'</code> on that user’s connection. No shared database account or app-only FIDO fallback.</small></section>
+</div><footer>Each operation uses its own MySQL connection. No server-attached YubiKey, terminal prompts, or mysql CLI client is used.</footer>
+</main></body></html>
