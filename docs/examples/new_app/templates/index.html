@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>Gateway hello world tutorial</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/auth.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Gateway hello world</h1>
+    <p>Origin: {{ origin }} · RP ID: {{ rp_id }}</p>
+    <p>Use the MySQL account prepared by your administrator. The key stays on your computer.</p>
+  </header>
+  <section class="activity" aria-label="MySQL activity">
+    <h2>MySQL activity</h2>
+    <p id="status" role="status" aria-live="polite">Ready. Register the key, then test Login.</p>
+    <pre id="commands" aria-label="Submitted SQL templates"></pre>
+    <pre id="result" aria-label="MySQL result"></pre>
+  </section>
+  <div class="forms">
+    <section>
+      <h2>1. Register your key</h2>
+      <p>Enroll once. Complete the browser PIN / verification and touch prompts.</p>
+      <form data-action="register">
+        <label>MySQL username *<input name="username" value="demo_tutorial" maxlength="32" autocomplete="username" required></label>
+        <label>MySQL user password *<input name="password" type="password" autocomplete="current-password" required></label>
+        <button>Register key</button>
+      </form>
+    </section>
+    <section>
+      <h2>2. Login and run SQL</h2>
+      <p>Use the same account and registered key. Your browser or key may still request a PIN.</p>
+      <form data-action="login">
+        <label>MySQL username *<input name="username" value="demo_tutorial" maxlength="32" autocomplete="username" required></label>
+        <label>MySQL user password *<input name="password" type="password" autocomplete="current-password" required></label>
+        <button>Login and say hello</button>
+      </form>
+    </section>
+  </div>
+  <footer>This example closes the database connection after each operation. No root password or key PIN is collected here.</footer>
+</main>
+</body>
+</html>

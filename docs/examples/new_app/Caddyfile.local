@@ -1,0 +1,5 @@
+# This tutorial app uses backend port 5002. Browser access stays on port 443.
+https://localhost {
+	tls internal
+	reverse_proxy 127.0.0.1:5002
+}

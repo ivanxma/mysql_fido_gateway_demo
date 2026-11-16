@@ -2,7 +2,7 @@
 
 ## Configuration layers
 
-The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. `app.py` translates selected environment values into `Gateway` arguments. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management.
+The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) translates selected environment values into `Gateway` arguments. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management. The [new application tutorial](new-application.md) has its own small starter and a separate backend port, 5002.
 
 The effective launcher order is:
 

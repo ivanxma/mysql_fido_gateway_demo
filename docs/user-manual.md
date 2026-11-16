@@ -225,7 +225,7 @@ The application logs error number, exception class, action, and stage without du
 - The default broker allows 32 current/recent flows and one unfinished flow per owner. Flows expire after 150 seconds. Bounded queues require active polling; unconsumed or excessive events can fill them.
 - No user connection pooling, durable session/credential storage, automatic reconnect, key recovery, or application-level authentication fallback is provided. Successful login closes the demo connection after its proof query; it does not establish a reusable database login session for later requests.
 - The administrator token is a demo access gate, not a complete administrator identity system. Rate limiting, durable ceremony management, stronger operator authorization, monitoring, and production deployment controls need additional work.
-- The automated tests use actual Connector/Python sockets with a protocol simulator and software authenticator. The current suite passes 25 tests; it is not a physical-YubiKey or commercial-server certification.
+- The automated tests use actual Connector/Python sockets with a protocol simulator and software authenticator. The current suite passes 27 tests, including the tutorial starter; it is not a physical-YubiKey or commercial-server certification.
 
 ## Validate a target deployment
 

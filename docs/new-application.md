@@ -1,157 +1,294 @@
-# Build an application using the gateway
+# Step by step tutorial for a new gateway application
 
-## Choose the integration model
+Build a separate Flask application that registers a YubiKey, logs in to MySQL using password plus WebAuthn, and executes `hello world` on that user's connection. The [complete starter files](examples/new_app/) provide the backend, browser flow handling, page, and configuration.
 
-Use the package for MySQL authentication and keep your application's routes, business authorization, and UI. Start from the working flow transport in [app.py](../app.py) and adapt the [browser helpers](../static/gateway.js). The package installation does not install a standalone Flask application, templates, or static files into your new project.
+The new application has two user actions: **Register key** and **Login and say hello**. A DBA prepares the account separately. There is no administrator token or root-password form in this example.
 
-Use one Gateway configuration and one Broker per process. Start one worker and one fresh owner-bound Flow per action. Registration owns and closes its restricted connection; login returns a connection that your worker must close.
+![Browser, key, gateway and MySQL interactions](diagrams/components.svg)
 
-The current package requires an origin such as `https://orders.example.com` with RP ID `orders.example.com`. Plan MySQL's global RP namespace before enrolling users. HTTP localhost/custom browser ports need implementation changes and separate compatibility validation; they are not enabled by installing the package.
+## Before you start
 
-## Install the package
+Use a local development machine with:
 
-Run in your new project directory, substituting your gateway checkout path:
+- A checkout of this repository and Python 3.12 or later. The base package declares Python 3.10+, but this tutorial uses a modern Python environment.
+- The MySQL WebAuthn plugin ACTIVE and an administrator able to configure a disposable test account.
+- A compatible FIDO2 YubiKey and browser. Registration must return the supported packed ES256/x5c attestation.
+- A trusted HTTPS endpoint for `localhost`. The supplied development proxy configuration uses Caddy; see its [installation guide](https://caddyserver.com/docs/install) if it is not installed.
+
+This tutorial follows the **current code**, which requires `BROWSER_ORIGIN=https://RP_ID` on port 443. The HTTP-only local model in the presentation was a documentation simplification; HTTP localhost is not enabled in Gateway's origin validation.
+
+The settings used throughout are:
+
+| Setting | Tutorial value |
+| --- | --- |
+| Browser URL | `https://localhost` |
+| RP ID in app and MySQL | `localhost` |
+| MySQL target | `127.0.0.1:5316` |
+| End-user account | `demo_tutorial@localhost` |
+| New app backend | `127.0.0.1:5002` |
+
+The new backend uses **5002** so it can coexist with the reference app on 5001. The browser still uses HTTPS port 443. Reconfiguring the local HTTPS endpoint in step 8 directs it to the new app.
+
+## Step 1 Record the gateway source directory
+
+In Terminal 1, change to the gateway repository root, where `pyproject.toml` and `mysql_fido_gateway/` exist:
+
+```bash
+export GATEWAY_SOURCE="$PWD"
+```
+
+Keep using this terminal through step 7 so the environment variables remain available.
+
+**Checkpoint:** `GATEWAY_SOURCE` identifies the package checkout, not the new application directory.
+
+## Step 2 Create an empty application directory
+
+Choose a new directory beside the checkout. If the name already exists, choose another empty directory before copying files.
+
+```bash
+mkdir ../gateway_hello_app
+cd ../gateway_hello_app
+```
+
+This application is independent of the gateway repository. Your project imports the installed package; it does not need its own copy of the protocol implementation.
+
+## Step 3 Create the environment and install the package
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install '/path/to/mysql_browser_gateway[demo]'
+python -m pip install -e "${GATEWAY_SOURCE}[demo]"
+python -c "from mysql_fido_gateway import Gateway, BridgeError; print('Gateway import OK')"
 ```
 
-The `demo` extra installs Flask. The base package installs the pinned connector and CBOR library. You can distribute a reviewed package wheel internally instead of using a local checkout.
+The `demo` extra supplies Flask. The base package pins Connector/Python to `26.10.0` and installs `cbor2`. Editable installation means changes to that gateway checkout are visible to this application; use a reviewed wheel/version for a controlled deployment.
 
-Configure MySQL's plugin, account factors, RP ID, timeout, source-host matching, and grants as described in the [user manual](user-manual.md#prepare-the-server-and-account). Root provisioning is an administrative workflow; do not expose the demo root form as an ordinary end-user feature.
+**Checkpoint:** the final command prints `Gateway import OK`. It does not attempt to connect to MySQL.
 
-## Configure the bridge explicitly
+## Step 4 Copy the complete starter
+
+```bash
+cp -R "${GATEWAY_SOURCE}/docs/examples/new_app/." .
+```
+
+Your project now contains:
+
+```text
+gateway_hello_app/
+  app.py
+  config.example.env
+  Caddyfile.local
+  .gitignore
+  templates/
+    index.html
+  static/
+    auth.js
+    style.css
+```
+
+| File | What to learn from it |
+| --- | --- |
+| [app.py](examples/new_app/app.py) | Gateway configuration, owner-bound routes, worker operations, and connection cleanup |
+| [index.html](examples/new_app/templates/index.html) | Register/Login forms, CSRF meta tag, and activity/result elements |
+| [auth.js](examples/new_app/static/auth.js) | Binary conversion, polling, actual WebAuthn calls, serialized replies, and error handling |
+| [style.css](examples/new_app/static/style.css) | Small responsive interface using local assets |
+| [config.example.env](examples/new_app/config.example.env) | Non-secret local defaults |
+| [Caddyfile.local](examples/new_app/Caddyfile.local) | HTTPS localhost forwarded to this example's backend on port 5002 |
+
+**Checkpoint:** all files above exist in your new project. Do not copy the reference app's `start.sh`: it starts the original backend on 5001 and configures that backend's proxy target.
+
+## Step 5 Prepare MySQL and a fresh user
+
+Use a disposable test database or coordinate with its DBA. Changing the global RP ID can invalidate existing registrations for other accounts/applications. The example assumes MySQL sees the gateway connection as `localhost`; adjust the account host if your database observes a different source.
+
+As an administrator, first inspect the server:
+
+```sql
+SELECT PLUGIN_STATUS
+FROM INFORMATION_SCHEMA.PLUGINS
+WHERE PLUGIN_NAME = 'authentication_webauthn';
+
+SELECT @@GLOBAL.authentication_webauthn_rp_id,
+       @@GLOBAL.connect_timeout,
+       @@GLOBAL.authentication_policy;
+```
+
+The plugin must be ACTIVE, and authentication policy must permit the password/WebAuthn combination. This tutorial does not install the Enterprise plugin or override a shared server's authentication policy.
+
+After choosing `localhost` as this test server's RP ID:
+
+```sql
+SET PERSIST authentication_webauthn_rp_id = 'localhost';
+SET PERSIST connect_timeout = 180;
+
+CREATE USER 'demo_tutorial'@'localhost'
+  IDENTIFIED WITH caching_sha2_password BY '<choose-a-unique-user-password>'
+  AND IDENTIFIED WITH authentication_webauthn;
+```
+
+Replace the password placeholder before executing the SQL. If the account already exists, choose a fresh test username and use it in both forms. Do not drop an existing account merely to repeat the tutorial. If your server already has a longer timeout, preserve that value rather than reducing it to 180.
+
+**Checkpoint:** account creation succeeds. You know the **new user password**. The root password, administrator token, and YubiKey PIN are not substitutes for it.
+
+## Step 6 Load the application settings
+
+Back in Terminal 1, in the new project with its virtual environment active:
+
+```bash
+cp config.example.env .env
+set -a
+source ./.env
+set +a
+export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+Only source an environment file you control. The starter reads exported variables and requires `FLASK_SECRET_KEY`; it does not automatically load `.env`. The generated secret remains in this terminal environment. Store a stable secret through your normal secret-management process when browser sessions must survive restarts. `.env` is ignored by the copied `.gitignore`.
+
+The example defaults to local MySQL at port 5316 and explicitly allows the loopback database transport exception. For a remote DB, configure `DB_SSL_CA`, certificate-matching `DB_HOST`, and the appropriate port, then unset the loopback exception. Browser HTTPS and database TLS are separate settings; see the [configuration reference](configuration.md#python-database-configuration-parameters).
+
+**Checkpoint:** the effective app values are `RP_ID=localhost` and `BROWSER_ORIGIN=https://localhost`, matching the server. No DB user password or PIN belongs in `.env`.
+
+## Step 7 Start the new Flask backend
+
+```bash
+python app.py
+```
+
+Leave Terminal 1 running. It should report a listener at `127.0.0.1:5002`. The app's cookie is named `gateway_tutorial_session`, so it is distinct from the reference app's default cookie.
+
+The printed backend URL is not the browser authentication origin. Complete step 8, then open `https://localhost`.
+
+**Checkpoint:** startup succeeds without a missing-secret, connector-version, or database-TLS-policy exception. Constructing Gateway does not yet validate the user password or open a database connection.
+
+## Step 8 Point local HTTPS at the new application
+
+In Terminal 2, change to the new application's directory. If a development Caddy process is already running, load this project's configuration:
+
+```bash
+caddy reload --config Caddyfile.local --adapter caddyfile
+```
+
+If no Caddy process is running, start it in this terminal instead:
+
+```bash
+caddy run --config Caddyfile.local --adapter caddyfile
+```
+
+These are alternative commands for an existing process or a new process. Reloading changes the local proxy's loaded configuration; use a development instance whose routes you control. It now forwards `https://localhost` to port 5002, rather than the original demo's 5001.
+
+If the browser does not trust the local CA, use `caddy trust` and your OS/browser trust process. Do not depend on bypassing certificate warnings. The commands are described in the [official Caddy command reference](https://caddyserver.com/docs/command-line).
+
+**Checkpoint:** opening **https://localhost** shows **Gateway hello world**, with Register and Login forms. If you still see the three-column reference demo, the HTTPS listener is still pointing to 5001.
+
+## Step 9 Register the user's key
+
+In **Register your key**:
+
+1. Enter `demo_tutorial`, or the fresh username from step 5.
+2. Enter that account's MySQL password.
+3. Insert the YubiKey into the browser computer and click **Register key**.
+4. Complete the browser's PIN/verification and touch prompts.
+
+The activity area displays registration statement templates. The worker calls:
 
 ```python
-from mysql_fido_gateway import Gateway
-from mysql_fido_gateway.broker import Broker
+result = gateway.register(username, password, flow.ask, on_command=show_command)
+```
 
-bridge = Gateway(
-    {
-        "host": "mysql.example.com",
-        "port": 3306,
-        "ssl_ca": "/secure/mysql-ca.pem",
-        "ssl_verify_cert": True,
-        "ssl_verify_identity": True,
-        "connection_timeout": 10,
-        "read_timeout": 180,
-        "write_timeout": 15,
-    },
-    origin="https://orders.example.com",
-    rp_id="orders.example.com",
+`flow.ask` pauses the worker while the browser receives creation options, calls WebAuthn, and posts its response. The package owns the restricted MySQL connection and runs INITIATE and FINISH on that same connection.
+
+**Checkpoint:** the result contains `registered: true`, `verified_by: MySQL FINISH REGISTRATION OK`, and a message asking you to try Login. A browser-created passkey alone is not proof of MySQL enrollment. If the account was already enrolled successfully, proceed to Login rather than trying to replace it silently.
+
+See the [registration sequence diagram](user-manual.md#registration-sequence) for the message exchange.
+
+## Step 10 Login and confirm hello world
+
+In **Login and run SQL**, enter the same username and password, then click **Login and say hello**. Touch the key when prompted. A PIN may still be required by discovery, browser behavior, or key policy, even though login discourages user verification.
+
+The worker authenticates before running the query:
+
+```python
+with gateway.connect(username, password, flow.ask) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute(PROOF_SQL)
+        greeting, account, connection_id, version = cursor.fetchone()
+```
+
+`PROOF_SQL` is defined in the starter as:
+
+```sql
+SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version;
+```
+
+**Checkpoint:** the page displays `message: hello world`, the expected `mysql_account`, and real connection/version values. The worker closes this connection before reporting success. The result is an operation result, not a persistent login session for later requests.
+
+See the [login sequence diagram](user-manual.md#login-sequence) for accepted and rejected paths.
+
+## Step 11 Check rejection and isolation
+
+Before adding a business screen, exercise these paths:
+
+| Try | Expected behavior |
+| --- | --- |
+| Wrong MySQL password | Error, no successful result, and no proof query |
+| Cancel the browser key prompt | Error, not an authenticated result |
+| A different key | MySQL must not accept it as the registered account's key |
+| A second browser profile/incognito session | It has its own owner/CSRF cookie and cannot consume the first session's flow |
+| Reload/restart during a pending flow | Start a new ceremony; in-memory pending work is not resumable |
+
+The repository tests exercise this starter with the protocol simulator and software authenticator. Run them from the **gateway source checkout**, using an environment with `requirements-dev.txt` installed:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_tutorial_app.py' -v
+```
+
+That automated check does not replace a real browser/YubiKey/MySQL test.
+
+## Step 12 Make the first application change
+
+After the complete path works, modify the login worker's query. Keep the authenticated connection and parameter binding. For example, this replacement preserves the starter's four-column result shape:
+
+```python
+cursor.execute(
+    "SELECT %s, CURRENT_USER(), CONNECTION_ID(), @@version",
+    ("hello from my application",),
 )
-broker = Broker()
+greeting, account, connection_id, version = cursor.fetchone()
 ```
 
-Do not put account passwords, root credentials, pools, or an initial database into `db_config`. The origin must be the browser's origin; it is not the DB connection hostname.
+Restart the new backend, refresh the HTTPS page, and log in again. The new greeting should appear. To access actual tables, arrange the account's least-privilege grants and use an authorized schema only after authentication. Do not add a public arbitrary-SQL input or substitute a shared database account after an error.
 
-## Implement one worker per action
+Keep these working pieces when you build more screens:
 
-This example is an integration component, not a complete HTTP server. It assumes the `bridge` above and a Flow created for a validated browser session. Invoke it off the request thread and expose owner-checked polling/respond routes as in the reference app.
+- `Gateway`: password/WebAuthn database authentication and per-user connection handling.
+- `Broker` and `Flow`: owner checking, deadline, one-use browser response, and one pending action per owner.
+- `protect()`: exact Origin, CSRF, secure session cookie, and canonical local browser hostname.
+- `auth.js`: binary encoding, actual WebAuthn operations, polling, safe text rendering, and password clearing.
 
-```python
-import mysql.connector
-from mysql_fido_gateway import BridgeError
+## Stop and resume
 
+Stop the new backend with Ctrl+C in Terminal 1. It does not delete the MySQL account or key credential. Starting it later with the same configuration allows the already enrolled user to log in again; do not register on every start.
 
-def authentication_worker(flow, action, username, password):
-    connection = None
-    try:
-        if action == "register":
-            result = bridge.register(
-                username,
-                password,
-                flow.ask,
-                on_command=lambda sql: flow.events.put_nowait(
-                    {"type": "command", "sql": sql}
-                ),
-            )
-        elif action == "login":
-            connection = bridge.connect(username, password, flow.ask)
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT %s, CURRENT_USER()", ("hello world",))
-                greeting, account = cursor.fetchone()
-            result = {"message": greeting, "mysql_account": account}
-        else:
-            raise BridgeError("Unknown authentication action")
-        flow.finish({"type": "success", "result": result})
-    except BridgeError as error:
-        flow.finish({"type": "error", "message": str(error)})
-    except mysql.connector.Error as error:
-        flow.finish({
-            "type": "error",
-            "message": f"MySQL operation failed (error {error.errno})",
-        })
-    except Exception:
-        flow.finish({"type": "error", "message": "Authentication operation failed"})
-    finally:
-        if connection is not None:
-            connection.close()
-```
+To return the local HTTPS endpoint to the original demo, reload `Caddyfile.local` from the **gateway source checkout**. That configuration targets 5001; the tutorial copy targets 5002.
 
-Start it after your route has validated Origin, CSRF, action, and submitted credentials:
+## Troubleshooting checkpoints
 
-```python
-import threading
+| Symptom | Return to |
+| --- | --- |
+| `No module named mysql_fido_gateway` | Step 3: activate this project's environment and install the correct source path |
+| Missing `FLASK_SECRET_KEY` | Step 6: export the generated secret in the terminal starting Python |
+| Connector version or transport-policy error | Steps 3 and 6: use the pinned dependency and valid local/verified-remote DB settings |
+| Wrong page at `https://localhost` | Step 8: load the tutorial proxy target on 5002 |
+| HTTP 400 / host or origin mismatch | Steps 6–8: use the configured HTTPS hostname, not a LAN address/custom browser port |
+| HTTP 403 after restarting | Reload the page for a current session/CSRF token |
+| MySQL 1045 | Steps 5 and 9: use the end-user password and verify the matched account host |
+| User needs registration | Step 9: complete enrollment once for this account |
+| Already registered | Step 10: use Login; key replacement is a separate DBA workflow |
+| Unsupported attestation | Check the key/browser profile against the [requirements](user-manual.md#requirements) |
+| Flow expired / gateway busy | Start a new action after pending/recent flows expire; keep one process and poll promptly |
 
+## Requirements and limits carried into the new app
 
-def begin_action(owner, action, username, password):
-    # owner comes from your validated session, not from submitted JSON.
-    flow = broker.create(owner)
-    threading.Thread(
-        target=authentication_worker,
-        args=(flow, action, username, password),
-        daemon=True,
-    ).start()
-    return {"flow_id": flow.id}  # Your route returns this with HTTP 202.
-```
+The new app inherits the gateway's [requirements](user-manual.md#requirements), [limitations](user-manual.md#limitations), and [API contract](api-reference.md). In particular, it remains a single-process development example with 150-second flows, narrow attestation support, no key-recovery UI, no connection pooling, and no persistent authenticated database session across requests.
 
-Do not call `begin_action()` for arbitrary unvalidated owner strings. In a real application, also bound thread creation and apply appropriate request/rate controls. This reference broker is for one process; independent workers do not share it.
-
-## Connect the browser transport
-
-Implement the [three HTTP endpoints](api-reference.md#http-endpoints) with these responsibilities:
-
-1. Start an action using an owner from the current session and return its `flow_id`.
-2. On every poll, call `broker.get(flow_id, current_owner)` before reading an event. Convert a one-second `queue.Empty` wait to `{"type": "waiting"}`.
-3. On every response POST, check Origin/CSRF and owner, then call `flow.respond(reply['request_id'], reply)`.
-
-The browser polls until `success`, `error`, or the deadline. For `webauthn` events, use the supplied encoding/serialization helpers:
-
-```javascript
-async function answerWebAuthn(flowId, event) {
-  let reply;
-  try {
-    const credential = event.operation === 'create'
-      ? await navigator.credentials.create({
-          publicKey: creationOptions(event.publicKey)})
-      : await navigator.credentials.get({
-          publicKey: requestOptions(event.publicKey)});
-    if (!credential) throw new Error('No credential returned');
-    reply = {request_id: event.request_id, credential: serialize(credential)};
-  } catch (error) {
-    reply = {request_id: event.request_id, error: error.name + ': ' + error.message};
-  }
-  await jsonRequest(`/api/flows/${flowId}/respond`, reply);
-}
-```
-
-This snippet depends on `creationOptions`, `requestOptions`, `serialize`, and your session/CSRF-aware `jsonRequest`. Do not copy the whole demo script without adapting its DOM selectors and form handlers. Do not add a YubiKey PIN field or change the browser's returned `clientDataJSON`.
-
-Render worker events as text. Preserve the distinction between action acceptance, browser-response delivery, and actual database authentication success. Display only redacted SQL templates.
-
-## Execute application SQL
-
-Run application queries on the connection returned by `bridge.connect()`. Select a business schema only after authentication or use authorized fully qualified table names. Bind values as parameters, and validate any identifiers your app allows the user to choose.
-
-Provision only the grants required by the app. A browser-session owner identifies the ceremony transport; the authenticated MySQL account and your business authorization determine what the user may do. Do not fall back to a shared database user after a failed challenge.
-
-The demo closes the connection after one operation. If your application needs a longer session, define per-user server-side connection ownership, expiry, cleanup, and reauthentication explicitly. Do not place passwords or connection objects in Flask's signed client cookie.
-
-## Validate before adding more screens
-
-First validate a complete account-create/register/login/query path with the target MySQL server and a physical key. Confirm `CURRENT_USER()`, wrong-password rejection, wrong-key rejection, cancellation, expiry, replay rejection, and cross-user isolation. Check what happens if the app restarts during a ceremony.
-
-Keep the [requirements and limitations](user-manual.md#requirements) in scope when choosing browser/key support, deployment topology, and operational controls.
+The local loopback DB exception is a development choice. Remote MySQL requires verified TLS, and the browser endpoint must match the configured HTTPS origin. Replace the Flask development server and add appropriate operator access, rate controls, and lifecycle/state management before production deployment. This tutorial makes no new hardware compatibility claim.
