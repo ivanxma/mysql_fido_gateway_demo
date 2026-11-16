@@ -311,3 +311,16 @@ These are explicit-import implementation helpers in `mysql_fido_gateway.codec`, 
 `Challenge(flags, salt, rp_id, account=b'')` is a frozen dataclass. `flags` is the capability byte, `salt` the challenge bytes, `rp_id` the ASCII domain, and `account` the registration account bytes. Prefer `Challenge.parse(raw, registration=False)`: it decodes MySQL challenge bytes, or standard-base64 registration input, validates a 32-byte salt and RP field, and consumes the full payload. `challenge.options(expected_rp, registration=False)` verifies RP equality and returns JSON-compatible creation/assertion options. The registration browser user ID is a SHA-256 digest of the account bytes.
 
 `Exchange`, `BrowserPlugin`, `BrowserAuthenticator`, `BrowserConnection`, and its `initiate_registration()` reader are private adapter machinery in `mysql_bridge.py`. Their connector hooks and constructor details are not extension points. `TESTED_CONNECTOR` is the internal version constant, not an environment override. Changing these internals requires protocol-level validation with the target connector/server.
+
+## Optional Flask application helpers
+
+Install the `demo` extra to use `mysql_fido_gateway.flask_util`. These helpers provide Flask applications around the Gateway and broker; the core package exports remain `Gateway` and `BridgeError`.
+
+| Function | Parameters | Result |
+| --- | --- | --- |
+| `create_demo_app(root, gateway=None)` | `root`: `pathlib.Path` with the demo's templates/static. Optional `gateway`: injected Gateway-compatible object for tests | Flask app with setup, create, register, and login enabled |
+| `create_action_app(root, action, gateway=None)` | Same `root`/`gateway`. `action`: exactly `create` or `register`; other values raise `BridgeError` | Flask app with only the chosen action enabled; other submitted actions are rejected |
+
+The helpers use the [reference application's environment settings](configuration.md), secure cookies, exact Origin/CSRF checks, one-use broker replies, and background workers. The combined demo uses cookie `gateway_create_login_register_setup`; single-action tutorials use `gateway_create` or `gateway_register`. They intentionally display the configured administrator token on administrator pages for this demo; MySQL passwords and key PINs are not displayed.
+
+Follow the separate [create-user](create-user-tutorial.md) and [registration](registration-tutorial.md) tutorials for complete minimal applications. The [login/main tutorial](login-main-tutorial.md) uses its local `lib/flask_util.py` helper because it retains an authenticated connection across requests; the demo/action helpers close the connection after each operation.

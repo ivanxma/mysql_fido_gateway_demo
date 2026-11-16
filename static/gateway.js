@@ -77,7 +77,7 @@ for (const form of document.querySelectorAll('form')) {
     notify(`${form.querySelector('button').textContent.trim()}: connecting to MySQL…`);
     operationMessage.closest('.operation-notifications').scrollIntoView({behavior: 'smooth', block: 'start'});
     button.disabled = true;
-    form.querySelectorAll('input[type=password]').forEach(input => input.value = '');
+    form.querySelectorAll('input[type=password]:not([name=admin_token])').forEach(input => input.value = '');
     try {
       if (['register', 'login'].includes(payload.action) && (!window.isSecureContext || !window.PublicKeyCredential)) {
         throw new Error('Open this page over trusted HTTPS in a browser supporting WebAuthn.');

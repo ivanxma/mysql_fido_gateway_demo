@@ -2,7 +2,7 @@
 
 See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
 
-For a separate YubiKey login page followed by a protected main page and Hello World button, use the [login application tutorial](docs/login-main-tutorial.md). Its minimal `app.py` delegates Flask and browser message handling to `lib/flask_util.py`.
+Build applications using three separate tutorials: [1. Create user](docs/create-user-tutorial.md), [2. Register YubiKey](docs/registration-tutorial.md), and [3. Login and main page](docs/login-main-tutorial.md). Each has a minimal `app.py` and delegates Flask setup and message handling to utility modules. The login tutorial ends on a protected main page with a Hello World button.
 
 A reusable Python transport and three-column Flask demo for this goal:
 

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>Create a MySQL user</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/auth.js" defer></script></head>
+<body><main><header><h1>Create a MySQL user</h1><p>Create a password + WebAuthn factor 2 account. Enrollment comes in Tutorial 2.</p>{% if admin_enabled %}<p>Demo administrator token: <code id="admin-token">{{ admin_token }}</code></p>{% else %}<p>Set ADMIN_TOKEN and restart to enable user creation.</p>{% endif %}</header>
+<div class="activity" role="status" aria-live="polite"><p id="status">Ready.</p><pre id="commands"></pre><pre id="result"></pre></div>
+<section><form data-action="create"><label>Administrator token *<input name="admin_token" value="{{ admin_token }}" autocomplete="off" required></label>
+<label>MySQL root password *<input name="root_password" type="password" autocomplete="off" required></label>
+<label>New MySQL username *<input name="username" value="demo_tutorial" pattern="demo_[A-Za-z0-9_]+" maxlength="32" required></label>
+<label>New user password *<input name="password" type="password" autocomplete="new-password" required></label>
+<button {% if not admin_enabled %}disabled{% endif %}>Create user</button></form></section>
+</main></body></html>

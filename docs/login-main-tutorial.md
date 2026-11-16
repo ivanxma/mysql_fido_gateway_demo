@@ -1,12 +1,23 @@
-# Tutorial: YubiKey login, main page, and Hello World
+# Tutorial 3: YubiKey login, main page, and Hello World
 
 Build a separate Flask application with a login page requiring a MySQL password and registered YubiKey. After MySQL accepts both factors, the browser opens a protected main page. Clicking **Retrieve Hello World** runs SQL on that user's authenticated connection.
 
 The runnable starter is in [examples/login_app](examples/login_app/app.py). Its `app.py` contains only application creation, the protected main page, and the Hello World action. [lib/flask_util.py](examples/login_app/lib/flask_util.py) contains Flask configuration, WebAuthn message transport, session handling, and connection cleanup. Copy the entire starter, including `lib/`.
 
+## The application you will build
+
+| Page | What the user sees | Next action |
+| --- | --- | --- |
+| `/login` | One login form: MySQL username, password, and **Sign in with YubiKey** | MySQL verifies the password and the key, then the browser opens `/main` |
+| `/main` | A protected main page with **Retrieve Hello World**, a result area, and **Log out** | Clicking the greeting button retrieves `Hello World` from MySQL |
+
+These are two separate pages. User provisioning and YubiKey registration are prerequisites completed before using this application.
+
+**Use the starter in `docs/examples/login_app/`.** The repository-root `app.py` and `start.sh` launch the three-column administration demo. The supplementary `docs/examples/new_app/` starter also has a different interface. Follow the copy and run commands below to build this two-page application in `../gateway_login_app`.
+
 ## Step 1 Prepare an enrolled account
 
-Complete the [first tutorial's server and account setup](new-application.md#step-5-prepare-mysql-and-a-fresh-user) and [register its YubiKey](new-application.md#step-9-register-the-users-key) before switching applications. Alternatively use the reference web app's setup, create-user, and registration forms.
+Complete [Tutorial 1: Create a MySQL user](create-user-tutorial.md) and [Tutorial 2: Register a YubiKey](registration-tutorial.md) before starting this application. Use the same account, password, key, database, and RP ID across all three tutorials.
 
 You need:
 
@@ -77,15 +88,25 @@ For a remote MySQL server, use a certificate-matching database hostname and `DB_
 
 ## Step 4 Start Flask
 
+In Terminal 1, make sure you are in the **new project directory** created in step 2, with its virtual environment active and the step 3 environment exported:
+
 ```bash
+pwd
 python app.py
 ```
 
-Keep this terminal open. Flask listens at `127.0.0.1:5003`. The application reads exported environment variables, and does not load `.env` by itself.
+The printed directory should end in `gateway_login_app`. Keep this terminal open. Flask must report `127.0.0.1:5003`. A listener on port 5001 belongs to the original demo; port 5002 belongs to the registration tutorial, and port 5004 to the create-user tutorial. The application reads exported environment variables, and does not load `.env` by itself.
 
 ## Step 5 Point local HTTPS at this application
 
-In another terminal, enter your new project directory. If Caddy is already serving the earlier tutorial or reference app:
+In Terminal 2, enter the same **new project directory**. When it is beside the gateway checkout as in step 2:
+
+```bash
+cd /path/to/gateway_login_app
+cat Caddyfile.local
+```
+
+Replace `/path/to/gateway_login_app` with its actual path from Terminal 1. The proxy configuration must contain `reverse_proxy 127.0.0.1:5003`. If Caddy is already serving the earlier tutorial or reference app, reload this project's configuration:
 
 ```bash
 caddy reload --config Caddyfile.local --adapter caddyfile
@@ -97,9 +118,11 @@ Otherwise start it in the foreground:
 caddy run --config Caddyfile.local --adapter caddyfile
 ```
 
-Use the existing trusted local Caddy installation from the [first tutorial's HTTPS setup](new-application.md#step-8-point-local-https-at-the-new-application). Local certificate trust and permission to bind port 443 must already be configured. This changes the local `https://localhost` target to backend 5003; stop the old Flask process if it is no longer needed. See [Caddy's command documentation](https://caddyserver.com/docs/command-line).
+Use the existing trusted local Caddy installation from the [HTTPS setup reference](new-application.md#step-8-point-local-https-at-the-new-application). Local certificate trust and permission to bind port 443 must already be configured. This changes the local `https://localhost` target to backend 5003; stop the old Flask process if it is no longer needed. See [Caddy's command documentation](https://caddyserver.com/docs/command-line).
 
 Open **https://localhost**. You should see **Sign in with your YubiKey**. Opening the raw backend redirects to the configured HTTPS origin.
+
+**Checkpoint:** the browser shows one username/password form and one sign-in button. If it shows three columns, HTTPS is still targeting the original demo. Check the proxy configuration above and reload it from `gateway_login_app`, then refresh the browser. Running the new Flask process alone does not change an existing proxy's target.
 
 ## Step 6 Sign in using the key
 
@@ -207,4 +230,4 @@ The tests exercise actual Connector/Python packets and signed software-key asser
 - The helper uses autocommit and returns a single dictionary row. It provides no transaction, arbitrary SQL, pooling, registration, provisioning, profile manager, or distributed session implementation.
 - The Flask development server and local internal certificate support this tutorial. Production use needs an appropriate WSGI server, trusted HTTPS, access/rate controls, and deliberate process and session lifecycle management. See the [general limitations](user-manual.md#limitations).
 
-To restore the original demo after finishing, reload `Caddyfile.local` from the gateway repository root (backend 5001), or the first tutorial's project configuration (backend 5002).
+To restore the original demo after finishing, reload `Caddyfile.local` from the gateway repository root (backend 5001), or the registration tutorial's project configuration (backend 5002).

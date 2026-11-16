@@ -5,6 +5,7 @@
 <body><main><header><span class="eyebrow">Reusable gateway prototype</span><h1>Your YubiKey. MySQL’s decision.</h1>
 <p>Register and authenticate against MySQL from a remote browser. The browser handles PIN and touch prompts on your device.</p>
 <div class="profile"><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
+{% if admin_enabled %}<p class="profile">Demo administrator token: <code id="admin-token">{{ admin_token }}</code></p>{% endif %}
 <section class="setup-banner" aria-labelledby="setup-title">
 <div class="operation-notifications" aria-label="MySQL notifications" aria-live="polite" role="status">
 <strong>MySQL activity</strong><p id="operation-message">Ready. Choose an action below.</p>
@@ -15,7 +16,7 @@
 <p>Sign in as MySQL root to set the server RP ID to <strong>{{ rp_id }}</strong> and connect_timeout to at least <strong>180 seconds</strong>. Settings persist across MySQL restarts; longer timeouts are preserved.</p>
 <small>Changing the RP ID can invalidate existing WebAuthn registrations. Root credentials are used for this operation only and are not saved.</small></div>
 <form data-action="setup" class="setup-form">
-<label>Administrator token *<input name="admin_token" type="password" autocomplete="off" required></label>
+<label>Administrator token *<input name="admin_token" value="{{ admin_token }}" type="password" autocomplete="off" required></label>
 <label>MySQL root password *<input name="root_password" type="password" autocomplete="off" required></label>
 <button {% if not admin_enabled %}disabled{% endif %}>Sign in as root &amp; apply settings</button>
 </form>
@@ -26,7 +27,7 @@
 <section><span class="step">01 · Administrator</span><h2>Create database user</h2>
 <p>An administrator provisions a real MySQL account with password + WebAuthn factor 2.</p>
 <form data-action="create">
-<label>Administrator token<input name="admin_token" type="password" autocomplete="off" required></label>
+<label>Administrator token<input name="admin_token" value="{{ admin_token }}" type="password" autocomplete="off" required></label>
 <label>MySQL root password<input name="root_password" type="password" autocomplete="off" required></label>
 <label>New username<input name="username" value="demo_fido" pattern="demo_[A-Za-z0-9_]+" maxlength="32" autocomplete="off" required></label>
 <label>New user password<input name="password" type="password" autocomplete="new-password" required></label>

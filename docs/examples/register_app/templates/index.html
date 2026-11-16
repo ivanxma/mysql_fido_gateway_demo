@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>Register your YubiKey</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/auth.js" defer></script></head>
+<body><main><header><h1>Register your YubiKey</h1><p>Use the account from Tutorial 1. Complete the browser PIN and touch prompts.</p></header>
+<div class="activity" role="status" aria-live="polite"><p id="status">Ready.</p><pre id="commands"></pre><pre id="result"></pre></div>
+<section><form data-action="register"><label>MySQL username *<input name="username" value="demo_tutorial" maxlength="32" autocomplete="username" required></label>
+<label>MySQL user password *<input name="password" type="password" autocomplete="current-password" required></label>
+<button >Register YubiKey</button></form></section>
+</main></body></html>

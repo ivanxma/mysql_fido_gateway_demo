@@ -201,7 +201,9 @@ class WebTests(unittest.TestCase):
                                              'ADMIN_TOKEN': 'test-admin-token'}):
                     app = create_app(gateway=object())
                     client = app.test_client()
-                    client.get('/', base_url='https://localhost')
+                    page = client.get('/', base_url='https://localhost')
+                    self.assertIn(b'id="admin-token">test-admin-token</code>', page.data)
+                    self.assertEqual(page.data.count(b'value="test-admin-token"'), 2)
                     with client.session_transaction() as s:
                         csrf = s['csrf']
                     headers = {'Origin': 'https://localhost', 'X-CSRF-Token': csrf}
@@ -212,7 +214,7 @@ class WebTests(unittest.TestCase):
                                                    ('localhost', max(180, timeout))]
                     connection = MagicMock()
                     connection.cursor.return_value.__enter__.return_value = cursor
-                    with patch('app.mysql.connector.connect', return_value=connection) as connect:
+                    with patch('mysql_fido_gateway.flask_util.mysql.connector.connect', return_value=connection) as connect:
                         rejected = client.post('/api/flows', base_url='https://localhost', headers=headers,
                                                json={**payload, 'admin_token': 'wrong'})
                         self.assertEqual(rejected.status_code, 403)
@@ -245,7 +247,7 @@ class WebTests(unittest.TestCase):
             client.get('/', base_url='https://localhost')
             with client.session_transaction() as s:
                 csrf = s['csrf']
-            with patch('app.mysql.connector.connect', side_effect=mysql.connector.Error('secret detail', errno=1045)):
+            with patch('mysql_fido_gateway.flask_util.mysql.connector.connect', side_effect=mysql.connector.Error('secret detail', errno=1045)):
                 response = client.post('/api/flows', base_url='https://localhost',
                                        headers={'Origin': 'https://localhost', 'X-CSRF-Token': csrf},
                                        json={'action': 'setup', 'admin_token': 'test-admin-token',

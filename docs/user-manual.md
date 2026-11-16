@@ -114,7 +114,7 @@ Running `python app.py` directly reads exported environment values, not `.env`, 
 
 ### Server setup banner
 
-Enter the administrator token printed by the launcher and the MySQL root password in the top setup banner. Click **Sign in as root & apply settings**.
+The demo displays the administrator token near the top of the page and prefills both administrator-token fields. Enter the MySQL root password in the top setup banner, then click **Sign in as root & apply settings**.
 
 The worker checks that the WebAuthn plugin is ACTIVE, sets the persistent MySQL RP ID to the application's `RP_ID`, and persists `connect_timeout=max(180, current_value)`. It then reads the values back. Provisioning requires a matching RP ID and a timeout of at least 150 seconds; setup normally gives at least 180 seconds.
 
