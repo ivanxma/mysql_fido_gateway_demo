@@ -1,0 +1,20 @@
+{
+  "account_created": true,
+  "login_pin_prompt": false,
+  "login_user_verified": false,
+  "login_result": {
+    "connection_id": "987",
+    "message": "hello world",
+    "mysql_account": "demo_video@localhost",
+    "server_version": "8.4.0-protocol-fixture",
+    "verified_by": "MySQL authentication OK + SQL query"
+  },
+  "browser_errors": [],
+  "protocol_errors": [],
+  "sql_commands": [
+    "ALTER USER USER() 2 FACTOR INITIATE REGISTRATION",
+    "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_0900_ai_ci'",
+    "SET @@session.autocommit = OFF",
+    "SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version"
+  ]
+}

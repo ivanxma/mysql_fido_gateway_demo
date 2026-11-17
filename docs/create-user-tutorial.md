@@ -39,7 +39,8 @@ mkdir ../tutorial_create_user
 cd ../tutorial_create_user
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e "${GATEWAY_SOURCE}[demo]"
+python -m pip wheel "${GATEWAY_SOURCE}" --no-deps --wheel-dir "${GATEWAY_SOURCE}/dist"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
 cp -R "${GATEWAY_SOURCE}/docs/examples/create_user_app/." .
 ```
 

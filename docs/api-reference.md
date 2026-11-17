@@ -1,5 +1,7 @@
 # Gateway API reference
 
+The optional Flask API is documented in [Flask wheel and application SQL](flask-wheel.md): `create_gateway_app`, `GatewayLogin`, `get_connection` / `getConnection`, and `auth.run` are imported from `mysql_fido_gateway.flask_login`. Install the `[flask]` extra to use them.
+
 ## Exported package interface
 
 ```python
@@ -10,7 +12,7 @@ These are the two names in the package's `__all__`. The Gateway constructor and 
 
 The reusable methods do not apply the demo HTTP route's username regex, `demo_` prefix, or root-name block. Those are application-layer policies, documented under the HTTP endpoints.
 
-Broker/Flow, codec utilities, adapter classes, Flask routes, and browser functions are separate supporting interfaces. Their availability for explicit import does not make them additional package-level exports or a stable external API.
+The documented Flask factories and SQL helpers are optional interfaces imported from their own modules. Broker/Flow are transport helpers; codec and adapter internals are implementation details. These names are not additional exports from the package root.
 
 ## Gateway constructor
 
@@ -75,7 +77,7 @@ The account must already exist and require WebAuthn factor 2. The operation open
 {"registered": True, "verified_by": "MySQL FINISH REGISTRATION OK"}
 ```
 
-The reference app adds its own `message` field after this return. The package does not create users, install plugins, set server variables, grant privileges, delete key passkeys, or retain a root session.
+The reference app adds its own `message` field after this return. `Gateway.register()` does not create accounts, install plugins, change server settings, grant privileges, or delete key passkeys. Account creation and server setup are separate administrator operations in `mysql_fido_gateway.flask_util`; their root connections close after each operation.
 
 **Errors:** `BridgeError` for unsupported/mismatched protocol data or an already enrolled account; `mysql.connector.Error` subclasses for database/connector failures. Exceptions from your callbacks propagate too. Do not treat a browser-created credential as successful enrollment without the returned MySQL result.
 
@@ -210,6 +212,56 @@ app = create_app(gateway=None)
 
 The created app exposes `app.extensions['browser_gateway']` and `app.extensions['ceremony_broker']`. Administrator routes still use the environment-derived `db_config` and a separate root connection, even with a supplied gateway object.
 
+## Flask login and SQL API
+
+Install the wheel with `[flask]` and import:
+
+```python
+from mysql_fido_gateway.flask_login import (
+    GatewayLogin, SessionEnded, create_gateway_app,
+    get_connection, getConnection,
+)
+```
+
+These routes and helpers implement a retained login for application SQL. They are separate from the three-in-one demo's `/api/flows` actions described below.
+
+### Factory and authenticated access
+
+```text
+create_gateway_app(root, gateway=None, *, session_seconds=None, clock=time.monotonic)
+```
+
+Returns `(app, auth)`. `root` is a `Path` containing the application's templates/static. The library supplies the login template and `gateway_auth.static` assets. `gateway` can inject a compatible authentication object for tests; otherwise environment values construct `Gateway`. `FLASK_SECRET_KEY` is required. `session_seconds` overrides `SESSION_TTL_SECONDS` (default 300, allowed 1–3600); `clock` is an injectable monotonic clock.
+
+The factory registers `app.extensions['gateway_login']`. It installs `/`, `/login`, `/api/login`, owner-scoped polling/reply routes, and `/api/logout`. The application defines `/main` and business routes, using `@auth.login_required`. Protect POST actions with the exact Origin and current `X-CSRF-Token`; successful login rotates the session owner and token. The bundled browser script loads the new page after success.
+
+`GatewayLogin(app, gateway, origin, *, session_seconds=300, clock=time.monotonic)` installs the same login behavior on an existing Flask app. The caller must supply the secret, secure cookie and trusted-host configuration, response headers, template/static setup, and `app.extensions['gateway_login'] = auth` if module-level connection helpers will be used. Reserve the utility's route/endpoint names; do not install it twice on the same app. The factory applies this configuration automatically.
+
+### SQL helpers
+
+| Signature | Contract |
+| --- | --- |
+| `auth.get_connection()` / `auth.getConnection()` | Context manager yielding the current login's connection facade inside a protected request |
+| `get_connection()` / `getConnection()` | Module-level aliases resolving `current_app.extensions['gateway_login']`; same protected-request requirement |
+| `auth.query(sql, params=None, *, many=False)` | Parameterized SELECT returning one dictionary row or `None`; `many=True` returns a list of dictionary rows |
+| `auth.run(operation)` | Managed transaction calling `operation(native_connection)` on the owning worker; returns the callback's detached result |
+| `auth.close()` | Revoke this process's sessions and wait up to two seconds for workers; also registered at process exit |
+
+Use the connection facade with `with`; it is not a raw Connector/Python connection. It supports `cursor(*, dictionary=True, buffered=True, **options)`, explicit `commit()`/`rollback()`, and automatic commit/rollback plus cursor cleanup at context exit. Cursor operations include `execute(sql, params=None)`, `executemany(sql, params)`, `fetchone()`, `fetchmany(size=1)`, `fetchall()`, `nextset()`, `close()`, `rowcount`, `lastrowid`, and `description`.
+
+The native connection stays on its worker. An active connection context serializes other requests using that login, while different users retain separate connections. Consume unbuffered results before closing cursors. Do not nest connection contexts or retain/share a facade or cursor after its request/context. DDL and explicit commits preserve MySQL's implicit/explicit commit semantics; rollback cannot undo an earlier commit.
+
+For stored procedures or other driver features, use `auth.run(operation)`. Its callback has no Flask request context: capture validated input first, close native cursors, and return data rather than connections/cursors. Leave authentication and connection lifecycle settings to the utility. See [complete examples](flask-wheel.md#connection-api).
+
+### Errors and session lifecycle
+
+- `SessionEnded`: missing/expired/revoked login, failed health check, queue/operation timeout, or failed transaction cleanup. The factory's handler clears the session; application API requests receive 401 plus a login redirect field, while pages redirect to `/login`.
+- `BridgeError`: invalid login inputs, origin/RP configuration, flow ownership/replay, or protocol policy. The installed handler returns JSON 400. Origin/CSRF failures return 403 before route execution.
+- Ordinary SQL and callback exceptions propagate to application code. A transaction context attempts rollback and can preserve a healthy login. Catch expected database/business errors in the application without logging secrets.
+- `RuntimeError`: nested connection contexts, a closed cursor, or use of a facade outside its originating request/thread/context. Invalid factory lifetimes/configuration can also fail during application construction.
+
+No password is retained for reconnect. Logout, absolute expiry, process restart, or connection loss requires a new browser login. A write that times out or loses its connection during commit can have an unknown outcome; resolve application state before retrying it. In-memory workers/connections require one process; live connections cannot be serialized into a distributed session store.
+
 ## HTTP endpoints
 
 The reference routes are a specific browser transport, not methods on Gateway. They require a session established by `GET /`. Every POST requires the exact configured `Origin`, a valid `X-CSRF-Token` from the page's meta tag, and the matching session cookie. The browser sends its Origin; do not hardcode another user's cookie or CSRF token.
@@ -314,7 +366,7 @@ These are explicit-import implementation helpers in `mysql_fido_gateway.codec`, 
 
 ## Optional Flask application helpers
 
-Install the `demo` extra to use `mysql_fido_gateway.flask_util`. These helpers provide Flask applications around the Gateway and broker; the core package exports remain `Gateway` and `BridgeError`.
+Install the `flask` extra (or the compatible `demo` extra) to use `mysql_fido_gateway.flask_util`. These helpers provide Flask applications around the Gateway and broker; the core package exports remain `Gateway` and `BridgeError`.
 
 | Function | Parameters | Result |
 | --- | --- | --- |
@@ -323,4 +375,4 @@ Install the `demo` extra to use `mysql_fido_gateway.flask_util`. These helpers p
 
 The helpers use the [reference application's environment settings](configuration.md), secure cookies, exact Origin/CSRF checks, one-use broker replies, and background workers. The combined demo uses cookie `gateway_create_login_register_setup`; single-action tutorials use `gateway_create` or `gateway_register`. They intentionally display the configured administrator token on administrator pages for this demo; MySQL passwords and key PINs are not displayed.
 
-Follow the separate [create-user](create-user-tutorial.md) and [registration](registration-tutorial.md) tutorials for complete minimal applications. The [login/main tutorial](login-main-tutorial.md) uses its local `lib/flask_util.py` helper because it retains an authenticated connection across requests; the demo/action helpers close the connection after each operation.
+Follow the separate [create-user](create-user-tutorial.md) and [registration](registration-tutorial.md) tutorials for complete minimal applications. The [login/main tutorial](login-main-tutorial.md) imports `create_gateway_app` from the wheel's `mysql_fido_gateway.flask_login` module and uses `auth.getConnection()` for application SQL. It retains each user's authenticated connection across requests; the demo/action helpers close connections after each operation.

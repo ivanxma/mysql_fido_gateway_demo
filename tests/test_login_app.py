@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import runpy
-import sys
 import threading
 import time
 import unittest
@@ -15,11 +14,7 @@ from tests.software_key import SoftwareKey
 
 
 STARTER = Path(__file__).resolve().parents[1] / 'docs/examples/login_app'
-sys.path.insert(0, str(STARTER))
-try:
-    create_app = runpy.run_path(str(STARTER / 'app.py'))['create_app']
-finally:
-    sys.path.pop(0)
+create_app = runpy.run_path(str(STARTER / 'app.py'))['create_app']
 
 
 class LoginAppTests(unittest.TestCase):
@@ -118,6 +113,149 @@ class LoginAppTests(unittest.TestCase):
         self.assertEqual(self.get('/main').status_code, 302)
         self.assertFalse(any(q.startswith("SELECT 'Hello World'") for q in self.server.commands))
 
+    def test_connection_context_parameters_writes_and_multiple_rows(self):
+        from flask import jsonify
+        from mysql_fido_gateway.flask_login import getConnection
+        self.assertEqual(self.login()['type'], 'success')
+        borrowed = []
+        value = "O'Reilly; -- value, not SQL"
+
+        def business_route():
+            with getConnection() as connection:
+                borrowed.append(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute("INSERT INTO example(value) VALUES (%s)", (value,))
+                    cursor.executemany("INSERT INTO example(value) VALUES (%s)", [('one',), ('two',)])
+                    cursor.execute("SELECT 'Hello World' AS message, CURRENT_USER() AS mysql_account, "
+                                   "CONNECTION_ID() AS connection_id WHERE %s = %s", (value, value))
+                    rows = cursor.fetchall()
+                    self.assertEqual(cursor.rowcount, 1)
+            return jsonify(rows=rows)
+
+        self.app.view_functions['hello'] = self.auth.login_required(business_route)
+        response = self.post('/api/hello')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['rows'][0]['mysql_account'], 'demo_tutorial@localhost')
+        statements = self.server.commands
+        self.assertTrue(any("O\\'Reilly" in sql for sql in statements))
+        self.assertIn('COMMIT', [sql.upper() for sql in statements])
+        with self.assertRaisesRegex(RuntimeError, 'context'):
+            borrowed[0].cursor()
+
+    def test_transaction_error_rolls_back_and_session_can_be_reused(self):
+        from flask import jsonify
+        self.assertEqual(self.login()['type'], 'success')
+        original = self.app.view_functions['hello']
+        start = len(self.server.commands)
+
+        def business_route():
+            try:
+                with self.auth.get_connection() as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute('UPDATE example SET value = %s', ('changed',))
+                    raise ValueError('Application validation failed')
+            except ValueError:
+                return jsonify(error='validation'), 409
+
+        self.app.view_functions['hello'] = self.auth.login_required(business_route)
+        self.assertEqual(self.post('/api/hello').status_code, 409)
+        statements = [sql.upper() for sql in self.server.commands[start:]]
+        self.assertIn('ROLLBACK', statements)
+        self.assertNotIn('COMMIT', statements)
+        self.app.view_functions['hello'] = original
+        self.assertEqual(self.post('/api/hello').status_code, 200)
+
+    def test_native_callback_runs_on_worker_and_sql_errors_roll_back(self):
+        from flask import jsonify
+        import mysql.connector
+        self.assertEqual(self.login()['type'], 'success')
+        seen = []
+
+        def business_route():
+            request_thread = threading.get_ident()
+            def work(connection):
+                seen.append(threading.get_ident())
+                self.assertNotEqual(threading.get_ident(), request_thread)
+                with connection.cursor(dictionary=True, buffered=True) as cursor:
+                    cursor.execute("SELECT 'Hello World' AS message, CURRENT_USER() AS mysql_account, CONNECTION_ID() AS connection_id")
+                    return cursor.fetchall()
+            rows = self.auth.run(work)
+            def rejected(connection):
+                raise mysql.connector.ProgrammingError('Synthetic SQL error')
+            with self.assertRaises(mysql.connector.ProgrammingError):
+                self.auth.run(rejected)
+            return jsonify(rows=rows, still_alive=self.auth.query('SELECT 1 AS alive', many=True))
+
+        self.app.view_functions['hello'] = self.auth.login_required(business_route)
+        result = self.post('/api/hello')
+        self.assertEqual(result.status_code, 200)
+        self.assertTrue(seen)
+        self.assertEqual(result.json['still_alive'], [{'alive': '1'}])
+
+    def test_same_user_requests_cannot_interleave_with_a_transaction(self):
+        from flask import jsonify
+        self.assertEqual(self.login()['type'], 'success')
+        login = self.auth.logins[self.owner]
+        entered, release, other_done = threading.Event(), threading.Event(), threading.Event()
+        responses, errors = [], []
+
+        def business_route():
+            with self.auth.get_connection():
+                entered.set()
+                if not release.wait(2):
+                    raise AssertionError('Test did not release transaction')
+            return jsonify(ok=True)
+
+        def first():
+            try: responses.append(self.post('/api/hello').status_code)
+            except Exception as error: errors.append(error)
+
+        def second():
+            try: login.query('SELECT 1 AS alive')
+            except Exception as error: errors.append(error)
+            finally: other_done.set()
+
+        self.app.view_functions['hello'] = self.auth.login_required(business_route)
+        one = threading.Thread(target=first)
+        two = threading.Thread(target=second)
+        one.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            two.start()
+            self.assertFalse(other_done.wait(.15))
+        finally:
+            release.set()
+            one.join(2)
+            if two.ident is not None: two.join(2)
+        self.assertEqual(errors, [])
+        self.assertEqual(responses, [200])
+        self.assertTrue(other_done.is_set())
+
+    def test_packaged_login_assets_work_without_starter_assets(self):
+        page = self.get('/login')
+        self.assertIn(b'/_gateway/static/login.js', page.data)
+        for name in ('common.js', 'login.js', 'style.css'):
+            with self.get('/_gateway/static/' + name) as asset:
+                self.assertEqual(asset.status_code, 200)
+
+    def test_failed_commit_revokes_session_instead_of_reusing_uncertain_state(self):
+        import mysql.connector
+        self.assertEqual(self.login()['type'], 'success')
+        login = self.auth.logins[self.owner]
+
+        def business_route():
+            def work(connection):
+                def failed_commit():
+                    raise mysql.connector.InterfaceError('Synthetic disconnect during commit')
+                connection.commit = failed_commit
+            self.auth.run(work)
+            self.fail('Failed transaction cleanup must not return success')
+
+        self.app.view_functions['hello'] = self.auth.login_required(business_route)
+        self.assertEqual(self.post('/api/hello').status_code, 401)
+        self.assertTrue(login.closed.wait(2))
+        self.assertEqual(self.get('/main').status_code, 302)
+
     def test_expiry_closes_idle_connection_and_missing_state_rejects_cookie(self):
         self.assertEqual(self.login()['type'], 'success')
         login = self.auth.logins[self.owner]
@@ -142,9 +280,8 @@ class LoginAppTests(unittest.TestCase):
         flow = self.auth.broker.create(self.owner)
         other = self.app.test_client()
         self.assertEqual(self.get('/api/login/' + flow.id, other).status_code, 400)
-        for name in ('common.js', 'login.js', 'main.js', 'style.css'):
-            with self.get('/static/' + name) as asset:
-                self.assertEqual(asset.status_code, 200)
+        with self.get('/static/main.js') as asset:
+            self.assertEqual(asset.status_code, 200)
 
     def test_two_sessions_have_separate_connections_owned_by_worker_threads(self):
         connections, errors = [], []
@@ -156,6 +293,7 @@ class LoginAppTests(unittest.TestCase):
                 self.closed = threading.Event()
                 self.sql = []
                 self.fail = False
+                self.autocommit = True
 
             def check_thread(self):
                 if threading.get_ident() != self.thread:
@@ -163,7 +301,14 @@ class LoginAppTests(unittest.TestCase):
 
             def cursor(self, **kwargs):
                 self.check_thread()
-                return self
+                parent = self
+                class Cursor:
+                    def __enter__(self): return self
+                    def __exit__(self, *args): self.close()
+                    def execute(self, sql, params=None): parent.execute(sql)
+                    def fetchone(self): return parent.fetchone()
+                    def close(self): parent.check_thread()
+                return Cursor()
 
             def __enter__(self):
                 return self
@@ -184,6 +329,12 @@ class LoginAppTests(unittest.TestCase):
             def close(self):
                 self.check_thread()
                 self.closed.set()
+
+            def commit(self):
+                self.check_thread()
+
+            def rollback(self):
+                self.check_thread()
 
         class AcceptedGateway:
             # Transport isolation only; real WebAuthn is covered by other tests.

@@ -1,49 +1,38 @@
-# Validation record — 2026-11-16
+# Validation record — library 0.2.0, 2026-11-17
 
-Result: **15 automated tests passed** with Python 3.14.6 and MySQL
-Connector/Python 26.10.0. Browser JavaScript passed `node --check`.
-Python source compilation, `pip check`, and a fresh package wheel build also
-passed.
+**40 automated tests pass** with Python 3.14.6 and Connector/Python 26.10.0. The full suite was also run against the installed 0.2.0 wheel, with library imports verified under the virtual environment's `site-packages`.
 
-The files selected for publication were reviewed for personal identifiers,
-local user paths, MAC addresses, embedded credentials, and private keys. No
-such values were found. Test passwords are synthetic fixtures, and test
-private keys are generated at runtime. Local environments, build artifacts,
-environment files, and key files are excluded through `.gitignore`.
+## Library and distribution checks
 
-The protocol tests use actual Connector/Python TCP handshakes, MFA negotiation,
-MySQL result sets and SQL operations against a purpose-built protocol simulator.
-A separate synthetic authenticator produces real P-256 attestation and assertion
-signatures; the simulator verifies them cryptographically.
+- Built `mysql_browser_fido_gateway-0.2.0-py3-none-any.whl` and verified its packaged modules, Flask extra, login template, JavaScript, and stylesheet.
+- Installed the wheel in an isolated target and checked login rendering, all bundled assets, authentication/CSRF gates, and opaque cookie contents without copying login UI into the application.
+- Checked `app.py --check-library` through direct and isolated Python startup. Both select the installed wheel; the check starts no listener and opens no database connection.
+- Copied the minimal login starter to a separate directory and exercised it against the installed wheel: login, a touch-only assertion, parameterized Hello World, connection reuse, transaction commit, and logout.
+- Copied the three-in-one app and its UI assets to a separate directory and exercised account creation, registration, touch-only login, and its SQL proof through the installed wheel. Administrator provisioning used a connection double; registration/login used the real connector against the protocol simulator.
+- Python compilation, browser JavaScript syntax checks, dependency consistency (`pip check`), and launcher shell syntax checks pass.
 
-The HTTP test exercises the Flask ceremony transport, reusable bridge, browser
-credential JSON shape, registration, login and returned SQL result together.
-It is an HTTP client test, not a real browser/YubiKey test.
+## Automated behavior covered
 
-Covered:
+- Real Connector/Python TCP handshakes, MFA negotiation, and registration INITIATE/FINISH on the same restricted connection.
+- Real P-256 signatures from a software authenticator, verified by the MySQL protocol simulator.
+- Wrong-password/signature rejection, absent FIDO factor rejection, pending-registration rejection, fresh challenges, and assertion replay rejection.
+- Exact RP/origin/challenge/type checks, cross-origin rejection, preservation of signed client bytes, and unsupported attestation rejection.
+- Owner-bound expiring flows, one-use replies, bounded queues, and HTTP Origin/CSRF checks.
+- Packaged Flask login UI, protected pages/actions, cookie rotation, no credentials in cookies, missing-server-state rejection, expiry, and logout cleanup.
+- SQL bound parameters (including quoted values), writes, batch execution, dictionary results, and transaction commit/rollback.
+- Application/native callback errors rolling back without discarding an otherwise healthy login; failed commit cleanup revoking the session.
+- Retained connection reuse, different-user isolation, worker thread ownership, and prevention of statement interleaving during the same user's transaction.
+- Rejection of connection facade use after context exit, plus native-driver callbacks running on their owning worker.
 
-- Registration INITIATE/FINISH on the same sandbox connection.
-- Login and query under the authenticated user's connection.
-- Database-side rejection of a wrong password and a different signing key.
-- Refusal when MySQL does not request FIDO factor 2.
-- Refusal to log in before registration.
-- Fresh random server challenges and rejection of an old assertion in a new flow.
-- RP ID, exact origin, challenge, ceremony type and cross-origin validation.
-- Preservation of signed browser client-data bytes and extra fields.
-- Unsupported `none` attestation rejection.
-- Length-encoded protocol values and truncated-payload rejection.
-- One-use replies, ceremony ownership, concurrent user isolation and expiration.
-- HTTP origin/CSRF checks and disabled-by-default administrator provisioning.
+## Browser demonstration and verification limits
 
-Not verified:
+A Chrome walkthrough was recorded using the actual application UI, synthetic credentials, a protocol test fixture, and illustrated security-key prompts. It demonstrates visible user steps. The prompts and software authenticator do not establish native browser WebAuthn or physical-key interoperability.
 
-- MySQL Enterprise 27.1.0 (or any actual Enterprise server plugin).
-- A physical YubiKey, its PIN dialog, or hardware-produced browser attestation.
-- Real-browser end-to-end behavior or visual rendering. A Chromium executable
-  was unavailable in the workspace; only the JavaScript syntax and HTML response
-  were checked.
-- Production deployment, multi-process operation, load or security review.
+Still unverified:
 
-Do not equate the protocol simulator's OK packets with certification of the
-commercial server plugin. Follow README's live compatibility checklist before
-claiming this prototype works with the target deployment.
+- MySQL Enterprise 27.1.0 or any actual Enterprise WebAuthn server plugin.
+- A physical YubiKey, its actual browser/OS PIN dialog, or hardware-produced attestation.
+- A real browser-generated hardware ceremony accepted by a live Enterprise MySQL server.
+- Production deployment, multi-process session architecture, load testing, or an external security review.
+
+Simulator OK packets and passing library tests are not commercial-server or hardware certification. Follow the [live compatibility checklist](README.md#tests-and-live-compatibility-checklist) before claiming compatibility with a target deployment.

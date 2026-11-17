@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf-token" content="{{ csrf }}"><title>Hello World</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<script src="{{ url_for('static', filename='common.js') }}" defer></script>
+<link rel="stylesheet" href="{{ url_for('gateway_auth.static', filename='style.css') }}">
+<script src="{{ url_for('gateway_auth.static', filename='common.js') }}" defer></script>
 <script src="{{ url_for('static', filename='main.js') }}" defer></script></head>
 <body><main><header><p>MYSQL · AUTHENTICATED</p><h1>Hello World</h1>
 <p>You are signed in. Retrieve a greeting from your MySQL connection.</p></header>

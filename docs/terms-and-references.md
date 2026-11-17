@@ -4,13 +4,13 @@
 
 **Purpose:** enable a user with a browser-local security key to complete the MySQL server's password plus WebAuthn authentication, then execute SQL under that user's accepted database account.
 
-**Scope:** the package authentication adapter, its browser callback contract, the reference broker/HTTP transport, the Flask demo's setup/create/register/login actions, and configuration of the supported prototype profile.
+**Scope:** library 0.2.0: the authentication adapter and browser callback contract, broker/HTTP transport, demo setup/create/register/login actions, retained Flask login sessions and transaction/cursor API, wheel installation, and the supported prototype profile.
 
 **Responsibilities:**
 
 - The database administrator manages plugin availability, server policy, RP ID, accounts, source-host matching, privileges, and recovery/unregistration procedures.
 - The application operator manages the browser endpoint, HTTPS trust, app secrets, gateway access, database transport, and process lifecycle.
-- The application developer implements owner-bound browser transport, callback/error handling, per-user connection ownership, and business authorization.
+- The application developer chooses the packaged Flask transport or implements a custom browser callback, then handles errors, per-user SQL access, transaction boundaries, and business authorization.
 - The user controls the local key gesture and verification prompt. The application must not collect the key PIN.
 - MySQL makes the final account authentication decision and applies database grants. The gateway does not replace that decision with application-only passkey authentication.
 
@@ -34,6 +34,7 @@ Production certification, arbitrary authentication-factor combinations, general 
 | Ceremony | One registration or authentication interaction, including challenge, browser response, and server decision |
 | Challenge | Fresh server-provided random data that binds a response to the current ceremony |
 | Client data JSON | Browser-produced `clientDataJSON` containing ceremony type, challenge, origin, and related fields; preserved byte-for-byte |
+| Connection facade | Request-scoped SQL interface returned by `auth.getConnection()`; forwards driver operations to the authenticated connection's owning worker |
 | Credential ID | Reference identifying a registered credential; not the private key. MySQL may not provide one for resident credentials |
 | CSRF | Cross-site request forgery; the demo checks a session-bound token and exact POST Origin |
 | Discoverable credential | Credential discoverable by the authenticator for an RP without the caller supplying a credential ID; also called resident credential |
@@ -52,8 +53,10 @@ Production certification, arbitrary authentication-factor combinations, general 
 | RP and RP ID | Relying party and its identifier. The identifier scopes the credential; in this app it must match MySQL's configured RP domain |
 | RP hash | SHA-256 hash of the RP ID carried in authenticator data and checked by the adapter |
 | Sandbox | MySQL's restricted pending-registration connection state; normal initialization and business SQL are withheld |
+| Transaction context | `with auth.getConnection()` scope that commits on success, rolls back on exceptions, closes its cursors, and restores autocommit, subject to MySQL commit semantics |
 | UP | User presence, normally a touch or equivalent gesture indicating local interaction |
 | UV | User verification, such as PIN/biometric verification performed locally by the authenticator |
+| Wheel | Installable Python `.whl` distribution; this release ships library modules and the login UI assets, while demo application files remain in the repository |
 | x5c | Attestation certificate-chain field; this adapter requires an attestation certificate and signature |
 
 Presence and verification are separate concepts. Requiring a touch does not necessarily require a PIN, and discouraging verification does not prohibit a browser/key from performing it. See [Yubico's explanation](https://developers.yubico.com/WebAuthn/WebAuthn_Developer_Guide/User_Presence_vs_User_Verification.html).
@@ -66,12 +69,17 @@ Presence and verification are separate concepts. Requiring a touch does not nece
 | [MySQL adapter](../mysql_fido_gateway/mysql_bridge.py) | Connector version pin, transport/origin policy, factor negotiation, registration and connection lifecycle |
 | [Codec](../mysql_fido_gateway/codec.py) | Challenge/options conversion, data checks, attestation restrictions, and wire encoding |
 | [Broker](../mysql_fido_gateway/broker.py) | Flow ownership, capacity, expiry, queues, and response tokens |
-| [Flask application](../app.py) | Environment mapping, routes, setup/provisioning, session/CSRF checks, errors, and proof query |
+| [Reference app entry point](../app.py) | Installed-wheel selection, version/location check, three-in-one factory delegation, and loopback listener |
+| [Demo/action utilities](../mysql_fido_gateway/flask_util.py) | Environment mapping, per-action connections, setup/provisioning, Origin/CSRF checks, errors, and proof query |
+| [Flask login utility](../mysql_fido_gateway/flask_login.py) | Retained sessions, worker ownership, `getConnection()`, parameterized queries, transactions, cleanup, and packaged login UI |
+| [Library guide](flask-wheel.md) | Wheel installation, upgrade, migration, and application SQL examples |
 | [Browser script](../static/gateway.js) | Browser byte conversion, WebAuthn calls, polling, response transport, and notifications |
 | [Launcher](../start.sh) | `.env` sourcing, local/remote defaults, administrator token behavior, and local HTTPS setup |
 | [Example environment](../config.example.env) | Non-secret example settings |
 | [Package metadata](../pyproject.toml) | Python minimum version, package version, dependencies, and extras |
-| [Tests](../tests/test_gateway.py) | Automated examples and negative-path coverage; simulator results are not hardware certification |
+| [Protocol/HTTP tests](../tests/test_gateway.py) | Authentication, transport, and negative-path coverage |
+| [Flask login tests](../tests/test_login_app.py) | Bound SQL, transaction cleanup, connection reuse, thread/session isolation, expiry, packaged assets, and logout; simulator results are not hardware certification |
+| [Validation record](../VALIDATION.md) | Current automated and installed-wheel checks, with the remaining live hardware/server limits |
 
 ## External technical references
 

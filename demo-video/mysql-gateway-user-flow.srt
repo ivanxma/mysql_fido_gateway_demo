@@ -1,0 +1,115 @@
+1
+00:00:00,000 --> 00:00:03,700
+Follow account creation, security key registration, and login.
+
+2
+00:00:03,700 --> 00:00:07,400
+Watch the typed entries and illustrated security prompts.
+
+3
+00:00:08,000 --> 00:00:09,854
+Start with Create database user.
+
+4
+00:00:09,854 --> 00:00:13,563
+The administrator enters the demo administrator token and root
+password.
+
+5
+00:00:13,563 --> 00:00:20,238
+Then choose a new username, and type the password that this user
+will use for registration and login.
+
+6
+00:00:20,238 --> 00:00:21,721
+Passwords appear as dots.
+
+7
+00:00:21,721 --> 00:00:25,801
+Leave the drop account option unchecked, and click Create MySQL
+user.
+
+8
+00:00:25,801 --> 00:00:29,880
+The confirmation tells you to register the user's security key next.
+
+9
+00:00:35,000 --> 00:00:36,068
+Move to registration.
+
+10
+00:00:36,068 --> 00:00:39,629
+Type the username and password for the account just created.
+
+11
+00:00:39,629 --> 00:00:43,190
+Click Register in browser to open the security key prompt.
+
+12
+00:00:47,000 --> 00:00:48,862
+Choose the connected security key.
+
+13
+00:00:48,862 --> 00:00:52,960
+The browser or operating system asks for the key's security PIN.
+
+14
+00:00:52,960 --> 00:00:56,312
+Enter that PIN in the security prompt, then continue.
+
+15
+00:00:56,312 --> 00:00:59,292
+Next, touch the security key when it flashes.
+
+16
+00:00:59,292 --> 00:01:04,135
+The PIN belongs to the key; it is different from the database
+password.
+
+17
+00:01:04,135 --> 00:01:06,370
+These illustrated prompts show the sequence.
+
+18
+00:01:06,370 --> 00:01:09,350
+The registration confirmation appears back in the application.
+
+19
+00:01:12,000 --> 00:01:15,959
+To log in, enter the same username and database password.
+
+20
+00:01:15,959 --> 00:01:17,542
+Click Authenticate to MySQL.
+
+21
+00:01:17,542 --> 00:01:23,480
+The browser now requests the registered security key, which is the
+user's physical security token.
+
+22
+00:01:25,000 --> 00:01:28,571
+Use the registered key and touch its flashing contact.
+
+23
+00:01:28,571 --> 00:01:33,332
+Login uses your database password and security token, without
+entering a PIN.
+
+24
+00:01:33,332 --> 00:01:36,110
+The key signs the authentication challenge automatically.
+
+25
+00:01:38,000 --> 00:01:38,362
+Success.
+
+26
+00:01:38,362 --> 00:01:41,977
+Hello world appears with the authenticated account and connection
+details.
+
+27
+00:01:41,977 --> 00:01:47,400
+The application screens are real; the database and security device
+are simulated for this walkthrough.

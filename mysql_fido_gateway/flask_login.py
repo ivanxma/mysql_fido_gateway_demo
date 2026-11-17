@@ -1,10 +1,7 @@
-"""Flask wiring, browser message transport, and per-user MySQL workers.
-
-This is a single-process tutorial helper, not part of the Gateway package API.
-Connections are created, queried, and closed exclusively by their own worker.
-"""
+"""Flask login sessions and SQL access on each user's authenticated worker."""
 import atexit
 from concurrent.futures import Future, TimeoutError
+from contextlib import contextmanager
 from functools import wraps
 import os
 import queue
@@ -15,7 +12,7 @@ import time
 from urllib.parse import urlsplit
 
 import mysql.connector
-from flask import Flask, g, jsonify, redirect, render_template, request, session
+from flask import Blueprint, Flask, current_app, g, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
@@ -34,59 +31,198 @@ class _Login:
         self.stop = threading.Event()
         self.closed = threading.Event()
         self.ready = False
+        self.access = threading.RLock()
+        self.borrowed = False
 
     def alive(self):
         return not self.stop.is_set() and self.clock() < self.deadline
 
-    def query(self, sql):
+    def run(self, operation, *, check=True):
+        if not self.access.acquire(timeout=20):
+            self.stop.set()
+            raise SessionEnded()
+        try:
+            return self._submit(operation, check=check)
+        finally:
+            self.access.release()
+
+    def _submit(self, operation, *, check):
         if not self.alive():
             raise SessionEnded()
         result = Future()
         try:
-            self.tasks.put_nowait((sql, result))
+            self.tasks.put_nowait((operation, check, result))
             return result.result(timeout=20)
         except (queue.Full, TimeoutError):
             self.stop.set()
             raise SessionEnded() from None
 
     @staticmethod
-    def fetch(connection, sql):
+    def fetch(connection, sql, params=None, *, many=False):
         with connection.cursor(dictionary=True, buffered=True) as cursor:
-            cursor.execute(sql)
-            return cursor.fetchone()
+            cursor.execute(sql, params) if params is not None else cursor.execute(sql)
+            return cursor.fetchall() if many else cursor.fetchone()
+
+    def query(self, sql, params=None, *, many=False):
+        return self.run(lambda connection: self.fetch(connection, sql, params, many=many) if sql else None)
 
     def serve(self, connection):
         while self.alive():
             try:
-                sql, result = self.tasks.get(timeout=.25)
+                operation, check, result = self.tasks.get(timeout=.25)
             except queue.Empty:
                 continue
             try:
                 if not self.alive():
                     raise SessionEnded()
                 # Never reconnect automatically: a new connection needs the key.
-                self.fetch(connection, 'SELECT 1 AS alive')
-                value = self.fetch(connection, sql) if sql else None
-                if not self.alive():
-                    raise SessionEnded()
-                result.set_result(value)
+                if check:
+                    self.fetch(connection, 'SELECT 1 AS alive')
             except Exception:
                 result.set_exception(SessionEnded())
                 break
+            try:
+                value = operation(connection)
+                if not self.alive():
+                    raise SessionEnded()
+                result.set_result(value)
+            except SessionEnded:
+                result.set_exception(SessionEnded())
+                break
+            except Exception as error:
+                # SQL/business errors belong to the application; a failed health
+                # check or expired session still revokes the connection.
+                result.set_exception(error)
 
     def finish(self):
         self.stop.set()
         while True:
             try:
-                _, result = self.tasks.get_nowait()
+                _, _, result = self.tasks.get_nowait()
                 result.set_exception(SessionEnded())
             except queue.Empty:
                 break
         self.closed.set()
 
 
+class _Connection:
+    """Request-scoped facade; native objects are used exclusively by the worker."""
+    def __init__(self, login):
+        self.login = login
+        self.active = True
+        self.thread = threading.get_ident()
+        self.cursors = []
+
+    def _call(self, operation):
+        if not self.active or threading.get_ident() != self.thread:
+            raise RuntimeError('Connection is valid only inside its borrowing request/context')
+        return self.login.run(operation, check=False)
+
+    def _begin(self):
+        def begin(connection):
+            self.autocommit = connection.autocommit
+            connection.autocommit = False
+        try:
+            self.login.run(begin)
+        except Exception:
+            self.login.stop.set()
+            raise SessionEnded() from None
+
+    def _finish(self, *, commit):
+        def finish(connection):
+            try:
+                # Close cursors before transaction commands. Applications must
+                # consume pending results from explicit unbuffered cursors.
+                for cursor in self.cursors:
+                    cursor._close_native()
+                if commit:
+                    connection.commit()
+                else:
+                    connection.rollback()
+                connection.autocommit = self.autocommit
+            except Exception:
+                self.login.stop.set()
+                raise SessionEnded() from None
+        self._call(finish)
+
+    def cursor(self, *, dictionary=True, buffered=True, **options):
+        cursor = _Cursor(self)
+        def create(connection):
+            cursor.native = connection.cursor(dictionary=dictionary, buffered=buffered, **options)
+        self._call(create)
+        self.cursors.append(cursor)
+        return cursor
+
+    def commit(self):
+        self._call(lambda connection: connection.commit())
+
+    def rollback(self):
+        self._call(lambda connection: connection.rollback())
+
+
+class _Cursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.native = None
+        self.closed = False
+
+    def _call(self, operation):
+        if self.closed:
+            raise RuntimeError('Cursor is closed')
+        return self.connection._call(lambda connection: operation(self.native))
+
+    def execute(self, sql, params=None):
+        def execute(cursor):
+            cursor.execute(sql, params) if params is not None else cursor.execute(sql)
+        self._call(execute)
+
+    def executemany(self, sql, params):
+        def execute(cursor):
+            cursor.executemany(sql, params)
+        self._call(execute)
+
+    def fetchone(self):
+        return self._call(lambda cursor: cursor.fetchone())
+
+    def fetchall(self):
+        return self._call(lambda cursor: cursor.fetchall())
+
+    def fetchmany(self, size=1):
+        return self._call(lambda cursor: cursor.fetchmany(size))
+
+    def nextset(self):
+        return self._call(lambda cursor: cursor.nextset())
+
+    @property
+    def rowcount(self):
+        return self._call(lambda cursor: cursor.rowcount)
+
+    @property
+    def lastrowid(self):
+        return self._call(lambda cursor: cursor.lastrowid)
+
+    @property
+    def description(self):
+        return self._call(lambda cursor: cursor.description)
+
+    def _close_native(self):
+        if not self.closed:
+            self.native.close()
+            self.closed = True
+
+    def close(self):
+        if not self.closed:
+            self.connection._call(lambda connection: self._close_native())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
 class GatewayLogin:
-    """Register login/logout routes and expose login_required and query(sql)."""
+    """Install FIDO login routes and per-user, worker-owned SQL access."""
 
     def __init__(self, app, gateway, origin, *, session_seconds=300, clock=time.monotonic):
         self.app, self.gateway, self.origin = app, gateway, origin
@@ -94,6 +230,9 @@ class GatewayLogin:
         self.broker = Broker()
         self.logins = {}
         self.lock = threading.Lock()
+        app.register_blueprint(Blueprint('gateway_auth', __name__,
+                               template_folder='templates', static_folder='static',
+                               static_url_path='/_gateway/static'))
         app.add_url_rule('/', 'index', self.index)
         app.add_url_rule('/login', 'login', self.login)
         app.add_url_rule('/api/login', 'start_login', self.start_login, methods=['POST'])
@@ -157,18 +296,63 @@ class GatewayLogin:
             return view(*args, **kwargs)
         return protected
 
-    def query(self, sql):
-        """Execute server-owned read-only SQL on this user's authenticated worker.
+    def _request_login(self):
+        login = getattr(g, 'mysql_login', None)
+        if login is None or login is not self.current():
+            raise SessionEnded()
+        return login
 
-        Never pass SQL from a request. This tutorial returns one dictionary row.
+    def query(self, sql, params=None, *, many=False):
+        """Execute application-owned SELECT SQL with bound parameters."""
+        return self._request_login().query(sql, params, many=many)
+
+    @contextmanager
+    def get_connection(self):
+        """Borrow this user's connection facade for a managed transaction.
+
+        The context commits on success, rolls back on error, and closes its
+        cursors. All driver calls stay on the owning worker. Do not retain the
+        facade/cursors outside this context or share them across request threads.
         """
-        return g.mysql_login.query(sql)
+        login = self._request_login()
+        if not login.access.acquire(timeout=20):
+            login.stop.set()
+            raise SessionEnded()
+        if login.borrowed:
+            login.access.release()
+            raise RuntimeError('Nested connection contexts are not supported')
+        login.borrowed = True
+        connection = _Connection(login)
+        try:
+            connection._begin()
+            try:
+                yield connection
+            except BaseException:
+                connection._finish(commit=False)
+                raise
+            else:
+                connection._finish(commit=True)
+        finally:
+            connection.active = False
+            login.borrowed = False
+            login.access.release()
+
+    getConnection = get_connection
+
+    def run(self, operation):
+        """Run a complete transaction with the native Connector/Python object.
+
+        operation(connection) runs on the worker, without Flask request context.
+        Return detached application data, never the connection or its cursors.
+        """
+        with self.get_connection() as connection:
+            return connection._call(operation)
 
     def index(self):
         return redirect('/main' if self.current() else '/login')
 
     def login(self):
-        return redirect('/main') if self.current() else render_template('login.html')
+        return redirect('/main') if self.current() else render_template('mysql_fido_gateway/login.html')
 
     def start_login(self):
         if self.current():
@@ -256,6 +440,14 @@ class GatewayLogin:
     def logout(self):
         self.revoke()
         return jsonify(redirect='/login')
+
+
+def get_connection():
+    """Borrow the authenticated connection inside a login_required Flask route."""
+    return current_app.extensions['gateway_login'].get_connection()
+
+
+getConnection = get_connection
 
 
 def create_gateway_app(root, gateway=None, *, session_seconds=None, clock=time.monotonic):

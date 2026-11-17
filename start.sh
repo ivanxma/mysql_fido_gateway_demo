@@ -19,9 +19,13 @@ fi
 PYTHON_BIN="$PWD/.venv/bin/python"
 if [[ ! -x "$PYTHON_BIN" ]]; then
     echo "Missing .venv. Run: python3 -m venv .venv" >&2
-    echo "Then run: .venv/bin/python -m pip install -r requirements.txt" >&2
+    echo 'Then install the wheel with its [flask] extra; see README.md.' >&2
     exit 1
 fi
+
+# Check before changing the proxy or displaying a temporary administrator token.
+# -I prevents this checkout's package from shadowing the installed wheel.
+"$PYTHON_BIN" -I "$PWD/app.py" --check-library
 
 export DB_HOST="${DB_HOST:-127.0.0.1}"
 export DB_PORT="${DB_PORT:-5316}"
@@ -70,4 +74,4 @@ if [[ "$START_MODE" == local ]]; then
 fi
 echo "Open $BROWSER_ORIGIN in your browser."
 echo "Starting Flask on 127.0.0.1:5001. Stop with Ctrl+C."
-exec "$PYTHON_BIN" app.py
+exec "$PYTHON_BIN" -I "$PWD/app.py"

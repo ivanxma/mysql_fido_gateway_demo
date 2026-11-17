@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf-token" content="{{ csrf }}"><title>YubiKey login</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<script src="{{ url_for('static', filename='common.js') }}" defer></script>
-<script src="{{ url_for('static', filename='login.js') }}" defer></script></head>
+<link rel="stylesheet" href="{{ url_for('gateway_auth.static', filename='style.css') }}">
+<script src="{{ url_for('gateway_auth.static', filename='common.js') }}" defer></script>
+<script src="{{ url_for('gateway_auth.static', filename='login.js') }}" defer></script></head>
 <body><main><header><p>MYSQL · GATEWAY TUTORIAL</p><h1>Sign in with your YubiKey</h1>
 <p>Use your MySQL password and an already registered key.</p></header>
 <div class="activity" role="status" aria-live="polite" id="status">Insert your YubiKey to begin.</div>

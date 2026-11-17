@@ -59,11 +59,12 @@ This application is independent of the gateway repository. Your project imports 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e "${GATEWAY_SOURCE}[demo]"
+python -m pip wheel "${GATEWAY_SOURCE}" --no-deps --wheel-dir "${GATEWAY_SOURCE}/dist"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
 python -c "from mysql_fido_gateway import Gateway, BridgeError; print('Gateway import OK')"
 ```
 
-The `demo` extra supplies Flask. The base package pins Connector/Python to `26.10.0` and installs `cbor2`. Editable installation means changes to that gateway checkout are visible to this application; use a reviewed wheel/version for a controlled deployment.
+The `flask` extra supplies Flask. The base package pins Connector/Python to `26.10.0` and installs `cbor2`. These commands build and install a regular wheel; library changes require rebuilding and reinstalling. Skip the build command when using a supplied wheel. This supplementary example demonstrates the lower-level browser transport; use the [login/main tutorial](login-main-tutorial.md) for the packaged Flask utility and `getConnection()`.
 
 **Checkpoint:** the final command prints `Gateway import OK`. It does not attempt to connect to MySQL.
 

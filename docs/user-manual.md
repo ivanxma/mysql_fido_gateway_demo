@@ -14,6 +14,19 @@ The browser and YubiKey are on the user's computer. The gateway service includes
 
 The package is an experimental interoperability prototype. A passing simulator test does not establish compatibility with a particular MySQL server, browser, or hardware key. See [limitations](#limitations) before selecting a deployment profile.
 
+## Using library 0.2.0 in an application
+
+| Application | Library entry point | Authenticated connection |
+| --- | --- | --- |
+| Three-in-one reference UI | `flask_util.create_demo_app()` | Closed after each setup/create/register/login action; the login proof query executes before closure |
+| Create-user or registration tutorial | `flask_util.create_action_app()` | Closed when the selected action finishes |
+| Protected Flask business application | `flask_login.create_gateway_app()` | Retained per login until logout, expiry, restart, or failure; application SQL uses `auth.getConnection()` |
+| Custom framework/transport | `Gateway.register()` / `Gateway.connect()` | Registration closes its own connection; application owns a successful login connection |
+
+All entries come from the `mysql_fido_gateway` package; install the wheel with `[flask]` for the Flask utilities. The retained-login factory supplies the login UI and shared browser assets, while your application supplies its main page and business routes. Its SQL context supports bound parameters, multiple rows, writes, and commit/rollback cleanup. The MySQL account's grants and application authorization govern access.
+
+See the [wheel installation and migration guide](flask-wheel.md), [login/main tutorial](login-main-tutorial.md), and [Flask API reference](api-reference.md#flask-login-and-sql-api). The three-in-one reference application's operation is described below.
+
 ## Requirements
 
 | Component | Requirement |
@@ -21,7 +34,7 @@ The package is an experimental interoperability prototype. A passing simulator t
 | Python | Python 3.10 or later, as declared by the package |
 | Connector | Exactly `mysql-connector-python==26.10.0`; the package checks this at construction time |
 | CBOR library | `cbor2==5.9.0` |
-| Reference web application | `Flask==3.1.3` |
+| Flask utilities | `Flask==3.1.3`, supplied by the wheel's `[flask]` extra |
 | Test dependencies | `cryptography>=44` in addition to the application dependencies |
 | MySQL | A server with the Enterprise `authentication_webauthn` plugin available and ACTIVE, and a policy permitting the password/WebAuthn chain |
 | Test account | Password factor 1 and WebAuthn factor 2; the demonstrated password plugin is `caching_sha2_password` |
@@ -91,16 +104,20 @@ Run from the repository root:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip wheel . --no-deps --wheel-dir dist
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+.venv/bin/python app.py --check-library
 cp config.example.env .env
 ./start.sh
 ```
+
+The combined demo delegates all three actions to `create_demo_app()` in the installed wheel, using this project's three-column template and assets. Skip the wheel build if you already have the supplied artifact. After changing library source, rebuild and reinstall it before restarting the demo. `--check-library` verifies the library without opening a database connection.
 
 Review `.env` before running: the launcher sources it as shell code. Do not put real secrets into `config.example.env` or commit `.env`.
 
 The current local launcher:
 
-- Uses `.venv/bin/python` without requiring virtual-environment activation.
+- Uses `.venv/bin/python` without requiring virtual-environment activation, checks for the installed 0.2.0 wheel, and uses isolated imports to avoid loading the adjacent source package.
 - Sets `RP_ID=localhost` and `BROWSER_ORIGIN=https://localhost`, overriding remote example values in the shell or `.env`.
 - Defaults the database to `127.0.0.1:5316` and permits the documented loopback database exception when no CA or explicit override is set.
 - Generates an administrator token when it is unset for the local origin, and prints the configured/generated token. An explicitly empty token disables administrator actions.
@@ -196,6 +213,10 @@ Use a database hostname matching its database TLS certificate. Browser HTTPS and
 
 | Symptom | Check |
 | --- | --- |
+| Missing/wrong library or an editable install | Install the 0.2.0 wheel with `[flask]` in the correct virtual environment, then run `python app.py --check-library` from the reference app directory |
+| Copied main page has missing scripts/styles | Load common.js and style.css from `gateway_auth.static`; keep the application's main.js under its own static endpoint |
+| Login session ends after an update/restart | Sign in again; a signed cookie cannot restore the lost in-memory authenticated connection |
+| Connection/cursor used outside its context | Keep `auth.getConnection()` and all cursor operations inside the protected request's `with` block; use `auth.run()` for native driver features |
 | Local/remote MySQL requires TLS settings | Use a valid CA and verification, or explicitly allow the loopback development exception for a local DB |
 | HTTP 400 and an untrusted host | Open the configured browser hostname; a local request through the loopback backend redirects to the configured HTTPS origin |
 | Port 5001 is already occupied | Stop the existing Flask instance before restarting; the reference application has no port environment variable |
@@ -223,7 +244,7 @@ The application logs error number, exception class, action, and stage without du
 - Connector/Python private APIs and special wire-format handling make version upgrades a compatibility exercise. Merely changing the version constant is not sufficient validation.
 - The demo keeps flows in memory in one process. Restarting loses pending ceremonies; multiple independent WSGI workers cannot share these flows without an alternative transport/state design.
 - The default broker allows 32 current/recent flows and one unfinished flow per owner. Flows expire after 150 seconds. Bounded queues require active polling; unconsumed or excessive events can fill them.
-- No user connection pooling, durable session/credential storage, automatic reconnect, key recovery, or application-level authentication fallback is provided. Successful login closes the demo connection after its proof query; it does not establish a reusable database login session for later requests.
+- No user connection pooling, durable authenticated-session storage, automatic reconnect, key recovery, or application-level authentication fallback is provided. The three-in-one demo closes login connections after the proof query. The retained Flask login utility keeps a separate authenticated connection per user, with an absolute lifetime (default 300 seconds), until logout, expiry, or failure; it remains process-local.
 - The administrator token is a demo access gate, not a complete administrator identity system. Rate limiting, durable ceremony management, stronger operator authorization, monitoring, and production deployment controls need additional work.
 - The automated tests use actual Connector/Python sockets with a protocol simulator and software authenticator. The suite includes both tutorial starters and session-isolation checks; it is not a physical-YubiKey or commercial-server certification.
 

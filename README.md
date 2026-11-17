@@ -2,6 +2,8 @@
 
 See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
 
+For reusable Flask applications, see [the wheel and `getConnection()` guide](docs/flask-wheel.md). The package includes login UI, parameterized SQL, multiple rows, and transaction contexts on each user's authenticated connection.
+
 Build applications using three separate tutorials: [1. Create user](docs/create-user-tutorial.md), [2. Register YubiKey](docs/registration-tutorial.md), and [3. Login and main page](docs/login-main-tutorial.md). Each has a minimal `app.py` and delegates Flask setup and message handling to utility modules. The login tutorial ends on a protected main page with a Hello World button.
 
 A reusable Python transport and three-column Flask demo for this goal:
@@ -46,9 +48,21 @@ Supported prototype profile:
 - Single Python process, in-memory ceremony state, at most 32 live/recent flows,
   150-second expiry, response ownership and one-use request tokens. Restarting
   loses pending ceremonies; the actual credentials remain in MySQL/YubiKey.
-- One fresh MySQL connection per action. Registration INITIATE and FINISH use
+- In the three-in-one demo, one fresh MySQL connection per action. Registration INITIATE and FINISH use
   the **same connection**. A login's `hello world` query uses that user's
   MySQL-accepted connection, then closes it. No shared-account pool.
+
+## Library 0.2.0
+
+The wheel provides three application interfaces:
+
+| Use | Import | Connection lifetime |
+| --- | --- | --- |
+| Three-in-one demo or create/register forms | `mysql_fido_gateway.flask_util` | A separate connection for each form action |
+| Protected Flask application with SQL | `mysql_fido_gateway.flask_login` | One authenticated connection per login, retained until logout, expiry, or failure |
+| Custom framework/browser transport | `Gateway` from `mysql_fido_gateway` | Application owns the connection returned by `Gateway.connect()` |
+
+For Flask application SQL, use `auth.getConnection()` in a protected route. It provides parameterized cursors, multiple-row results, and transaction cleanup; `auth.run(callback)` exposes the native driver on its owning worker. See the [library guide](docs/flask-wheel.md) for installation, upgrade, and migration examples, and the [API reference](docs/api-reference.md#flask-login-and-sql-api) for signatures and errors.
 
 ## 1. Prepare the test MySQL server (administrator)
 
@@ -107,7 +121,9 @@ to reuse it. Remote databases still require verified TLS.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip wheel . --no-deps --wheel-dir dist
+python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+python app.py --check-library
 
 export DB_HOST=127.0.0.1
 export DB_PORT=5316
@@ -115,6 +131,8 @@ export RP_ID=demo.example.com
 export BROWSER_ORIGIN=https://demo.example.com
 export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 ```
+
+The three-in-one `app.py` uses `create_demo_app()` from the installed **0.2.0 wheel**. Its template and browser assets remain in this project. Both direct startup and `start.sh` use isolated Python imports to keep the adjacent source package from shadowing the installed library. `--check-library` prints the selected version and install location without starting Flask or connecting to MySQL. Skip the build command when installing a supplied wheel; rebuild and reinstall after changing library code.
 
 For a local loopback database during testing, explicitly allow the development
 exception to mandatory DB certificate validation:
@@ -211,11 +229,13 @@ There are no terminal prompts for remote users. The gateway never invokes
 
 ## Reuse in another app
 
-Install the reusable package from this project:
+For a custom transport, install the core wheel without the optional Flask extra:
 
 ```bash
-python -m pip install .
+python -m pip install "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl"
 ```
+
+For a Flask application, install the same wheel with `[flask]` and follow the [login/main tutorial](docs/login-main-tutorial.md).
 
 ```python
 from mysql_fido_gateway import Gateway

@@ -147,6 +147,7 @@ class FakeMySQL:
                 ok(sock, sequence + 1)
             except Exception:
                 error(sock, sequence + 1, 'Invalid assertion'); return
+        autocommit = True
         while True:
             _, packet = recv(sock)
             if packet[0] == 1:
@@ -181,6 +182,13 @@ class FakeMySQL:
                 ok(sock, 1)
             elif query == 'SELECT 1 AS alive':
                 resultset(sock, ['alive'], [1])
+            elif query == 'SELECT @@session.autocommit':
+                resultset(sock, ['autocommit'], [int(autocommit)])
+            elif query == 'SELECT @@session.sql_mode':
+                resultset(sock, ['sql_mode'], [''])
+            elif query.startswith('SET @@session.autocommit = '):
+                autocommit = query.endswith('ON')
+                ok(sock, 1)
             elif query.startswith("SELECT 'Hello World' AS message"):
                 resultset(sock, ['message', 'mysql_account', 'connection_id'],
                           ['Hello World', user + '@localhost', 987])

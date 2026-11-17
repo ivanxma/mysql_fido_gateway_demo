@@ -3,10 +3,10 @@ from pathlib import Path
 
 from flask import jsonify, render_template
 
-from lib.flask_util import create_gateway_app
+from mysql_fido_gateway.flask_login import create_gateway_app
 
 
-HELLO_SQL = "SELECT 'Hello World' AS message, CURRENT_USER() AS mysql_account, CONNECTION_ID() AS connection_id"
+HELLO_SQL = "SELECT %s AS message, CURRENT_USER() AS mysql_account, CONNECTION_ID() AS connection_id"
 
 
 def create_app(gateway=None, **options):
@@ -20,7 +20,11 @@ def create_app(gateway=None, **options):
     @app.post('/api/hello')
     @auth.login_required
     def hello():
-        return jsonify(auth.query(HELLO_SQL))
+        with auth.getConnection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(HELLO_SQL, ('Hello World',))
+                result = cursor.fetchone()
+        return jsonify(result)
 
     return app
 

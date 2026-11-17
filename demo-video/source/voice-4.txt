@@ -1,0 +1,1 @@
+To log in, enter the same username and database password. Click Authenticate to MySQL. The browser now requests the registered security key, which is the user's physical security token.

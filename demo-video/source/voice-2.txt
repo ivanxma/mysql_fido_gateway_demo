@@ -1,0 +1,1 @@
+Move to registration. Type the username and password for the account just created. Click Register in browser to open the security key prompt.
