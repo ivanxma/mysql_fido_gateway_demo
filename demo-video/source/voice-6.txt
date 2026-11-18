@@ -1,1 +1,0 @@
-Success. Hello world appears with the authenticated account and connection details. The application screens are real; the database and security device are simulated for this walkthrough.

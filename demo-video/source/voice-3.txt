@@ -1,1 +1,0 @@
-Choose the connected security key. The browser or operating system asks for the key's security PIN. Enter that PIN in the security prompt, then continue. Next, touch the security key when it flashes. The PIN belongs to the key; it is different from the database password. These illustrated prompts show the sequence. The registration confirmation appears back in the application.

@@ -1,1 +1,0 @@
-Start with Create database user. The administrator enters the demo administrator token and root password. Then choose a new username, and type the password that this user will use for registration and login. Passwords appear as dots. Leave the drop account option unchecked, and click Create MySQL user. The confirmation tells you to register the user's security key next.

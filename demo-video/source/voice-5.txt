@@ -1,1 +1,0 @@
-Use the registered key and touch its flashing contact. Login uses your database password and security token, without entering a PIN. The key signs the authentication challenge automatically.

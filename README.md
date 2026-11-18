@@ -4,6 +4,8 @@
 
 **Start without cloning:** [install the public wheel URL and generate an app](GETTING_STARTED.md), or download the starter ZIP and open its start launcher. MySQL host and port are explicitly supplied by the operator.
 
+Watch the [getting-started and personalization video](demo/mysql-fido-newapp-getting-started.mp4) (1:58) for the `newapp` prompts, generated screens, and banner/color changes. The [create-user, registration, and login demo](demo/mysql-gateway-demo.mp4) (1:48) shows the authentication flow. These prototype demonstrations use a simulated database; security-key prompts in the authentication demo are illustrative.
+
 See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
 
 For reusable Flask applications, see [the wheel and `getConnection()` guide](docs/flask-wheel.md). The package includes editable login/registration templates and browser JavaScript, parameterized SQL, multiple rows, and transaction contexts on each user's authenticated connection.

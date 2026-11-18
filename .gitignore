@@ -16,3 +16,6 @@ dist/
 internal_docs/
 # Generated CLI application assets; assembled by scripts/build_release.py.
 mysql_fido_gateway/starter/
+
+# Video production assets stay outside the repository.
+/demo-video/
