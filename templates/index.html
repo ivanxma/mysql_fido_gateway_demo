@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/style.css"><script src="/static/gateway.js" defer></script></head>
 <body><main><header><span class="eyebrow">Reusable gateway prototype</span><h1>Your YubiKey. MySQL’s decision.</h1>
 <p>Register and authenticate against MySQL from a remote browser. The browser handles PIN and touch prompts on your device.</p>
-<div class="profile"><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
+<div class="profile"><span>MySQL: {{ db_host }}:{{ db_port }}</span><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
 {% if admin_enabled %}<p class="profile">Demo administrator token: <code id="admin-token">{{ admin_token }}</code></p>{% endif %}
 <section class="setup-banner" aria-labelledby="setup-title">
 <div class="operation-notifications" aria-label="MySQL notifications" aria-live="polite" role="status">
@@ -29,7 +29,7 @@
 <form data-action="create">
 <label>Administrator token<input name="admin_token" value="{{ admin_token }}" type="password" autocomplete="off" required></label>
 <label>MySQL root password<input name="root_password" type="password" autocomplete="off" required></label>
-<label>New username<input name="username" value="demo_fido" pattern="demo_[A-Za-z0-9_]+" maxlength="32" autocomplete="off" required></label>
+<label>New username<input name="username" placeholder="Enter a MySQL username" pattern="demo_[A-Za-z0-9_]+" maxlength="32" autocomplete="off" required></label>
 <label>New user password<input name="password" type="password" autocomplete="new-password" required></label>
 <label class="check"><input name="reset" type="checkbox">Drop this demo account first if it exists</label>
 <small>Dropping removes grants and server registration. Passkeys on the YubiKey are deleted manually.</small>
@@ -39,7 +39,7 @@
 <section><span class="step">02 · User enrollment</span><h2>Register your YubiKey</h2>
 <p>Use the username and <strong>new user password</strong> chosen in column 1. Insert your key into <strong>your computer</strong>, then register it.</p>
 <form data-action="register">
-<label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
+<label>MySQL username<input name="username" placeholder="Enter a MySQL username" maxlength="32" autocomplete="username" required></label>
 <label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
 <button>Register in browser</button></form>
 <div class="status" role="status" aria-live="polite"></div>
@@ -47,7 +47,7 @@
 <section><span class="step">03 · Database login</span><h2>Login · Hello world</h2>
 <p>Enter your MySQL password and touch your registered key. Login requests no PIN; your browser or key policy may still require one.</p>
 <form data-action="login">
-<label>MySQL username<input name="username" value="demo_fido" maxlength="32" autocomplete="username" required></label>
+<label>MySQL username<input name="username" placeholder="Enter a MySQL username" maxlength="32" autocomplete="username" required></label>
 <label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
 <button>Authenticate to MySQL</button></form>
 <div class="status" role="status" aria-live="polite"></div><pre class="proof"></pre>

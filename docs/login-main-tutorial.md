@@ -2,31 +2,32 @@
 
 Build a separate Flask application with a login page requiring a MySQL password and registered YubiKey. After MySQL accepts both factors, the browser opens a protected main page. Clicking **Retrieve Hello World** runs SQL on that user's authenticated connection.
 
-The runnable starter is in [examples/login_app](examples/login_app/app.py). Its `app.py` contains only application creation, the protected main page, and the Hello World action. The wheel's `mysql_fido_gateway.flask_login` module supplies Flask configuration, WebAuthn transport, sessions, and connection cleanup, including the login UI. The starter contains only application routes, its main-page template and script, and deployment configuration; login pages and transport scripts come from the installed library. See [the wheel and SQL guide](flask-wheel.md) for reusable application integration.
+For a download-first route, start with [the no-clone guide](../GETTING_STARTED.md) and `newapp`. The source-based runnable starter is in [examples/login_app](examples/login_app/app.py). Its `app.py` contains only application creation, the protected main page, and the Hello World action. The wheel's `mysql_fido_gateway.flask_login` module supplies Flask configuration, WebAuthn transport, sessions, and connection cleanup, including linked sign-in and passkey registration pages. The starter contains editable `templates/auth/` pages, application branding CSS, its main page, and business routes; editable browser scripts under `static/auth/` start from the library’s default implementations. See [the wheel and SQL guide](flask-wheel.md) for reusable application integration.
 
 ## The application you will build
 
 | Page | What the user sees | Next action |
 | --- | --- | --- |
-| `/login` | One login form: MySQL username, password, and **Sign in with YubiKey** | MySQL verifies the password and the key, then the browser opens `/main` |
+| `/login` | One login form: MySQL username, password, and **Sign in with security key** | MySQL verifies the password and the key, then the browser opens `/main` |
+| `/register` | Existing account credentials and **Register security-key passkey** | Browser handles key PIN/touch; after MySQL accepts enrollment, return to sign in |
 | `/main` | A protected main page with **Retrieve Hello World**, a result area, and **Log out** | Clicking the greeting button retrieves `Hello World` from MySQL |
 
-These are two separate pages. User provisioning and YubiKey registration are prerequisites completed before using this application.
+These are separate pages. The MySQL account must be provisioned first. Users with an enrolled key sign in directly; users with an unregistered WebAuthn factor follow **Register a passkey** on the login page.
 
-**Use the starter in `docs/examples/login_app/`.** The repository-root `app.py` and `start.sh` launch the three-column administration demo. The supplementary `docs/examples/new_app/` starter also has a different interface. Follow the copy and run commands below to build this two-page application in `../gateway_login_app`.
+**Use the starter in `docs/examples/login_app/`.** The repository-root `app.py` and `start.sh` launch the three-column administration demo. The supplementary `docs/examples/new_app/` starter also has a different interface. Follow the copy and run commands below to build this application in `../gateway_login_app`.
 
 ## Step 1 Prepare an enrolled account
 
-Complete [Tutorial 1: Create a MySQL user](create-user-tutorial.md) and [Tutorial 2: Register a YubiKey](registration-tutorial.md) before starting this application. Use the same account, password, key, database, and RP ID across all three tutorials.
+Complete [Tutorial 1: Create a MySQL user](create-user-tutorial.md) first. You can enroll its key through this application’s **Register a passkey** link, or use the separate [registration tutorial](registration-tutorial.md). Use the same account, password, key, database, and RP ID across all three tutorials.
 
 You need:
 
 - Python 3.12+, the pinned Connector/Python version installed by this repository, and MySQL Enterprise with the supported WebAuthn plugin and password + WebAuthn factor 2 account.
-- A supported FIDO2 YubiKey already registered to that account. See the [full requirements](user-manual.md#requirements).
+- A supported FIDO2 security key, such as a YubiKey. An already enrolled key can sign in; an unregistered account can enroll through `/register`. See the [full requirements](user-manual.md#requirements).
 - MySQL's RP ID and application `RP_ID` both set to `localhost`, with `connect_timeout` at least 180 seconds (preserve higher values).
 - A WebAuthn browser opening trusted `https://localhost` on port 443. The current gateway validates that exact HTTPS origin. Other hostnames and ports are different origins. A different RP ID requires corresponding server configuration and registration.
 
-This tutorial defaults to MySQL `127.0.0.1:5316`, Flask `127.0.0.1:5003`, and an enrolled `demo_tutorial` account. It contains no root or registration interface.
+Choose and explicitly configure your MySQL host, port, and TLS mode; none is assumed. The Flask backend uses `127.0.0.1:5003`. `demo_tutorial` is an illustrative provisioned account name, not an implicit login. It contains sign-in and key registration pages; account provisioning stays with the administrator.
 
 ## Step 2 Create a new project
 
@@ -38,22 +39,32 @@ mkdir ../gateway_login_app
 cd ../gateway_login_app
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip wheel "${GATEWAY_SOURCE}" --no-deps --wheel-dir "${GATEWAY_SOURCE}/dist"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+python "${GATEWAY_SOURCE}/scripts/build_release.py"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 python -c "from mysql_fido_gateway.flask_login import create_gateway_app; print('Flask FIDO library import OK')"
 cp "${GATEWAY_SOURCE}/docs/examples/login_app/app.py" "${GATEWAY_SOURCE}/docs/examples/login_app/config.example.env" "${GATEWAY_SOURCE}/docs/examples/login_app/Caddyfile.local" "${GATEWAY_SOURCE}/docs/examples/login_app/.gitignore" .
 cp -R "${GATEWAY_SOURCE}/docs/examples/login_app/templates" "${GATEWAY_SOURCE}/docs/examples/login_app/static" .
 ```
 
-Choose a different empty project directory if that name already exists. The first pip command builds the library wheel; skip it if you already have the reviewed 0.2.0 wheel. The second installs that wheel with its Flask dependency. This is a regular installation: changes in the library checkout take effect only after rebuilding and reinstalling. The sample application's files remain editable in your project.
+Choose a different empty project directory if that name already exists. The first pip command builds the library wheel; skip it if you already have the reviewed 0.3.0 wheel. The second installs that wheel with its Flask dependency. This is a regular installation: changes in the library checkout take effect only after rebuilding and reinstalling. The sample application's files remain editable in your project.
 
 ```text
 gateway_login_app/
   app.py
   .gitignore
   templates/
+    auth/
+      base.html
+      login.html
+      register.html
     main.html
   static/
+    auth.css
+    auth/
+      common.js
+      webauthn.js
+      login.js
+      register.js
     main.js
   config.example.env
   Caddyfile.local
@@ -76,9 +87,9 @@ Edit `.env` to match your database before sourcing it. Never put end-user or roo
 | `FLASK_SECRET_KEY` | Required; signs the opaque session cookie. Keep private and stable for the process |
 | `BROWSER_ORIGIN` | `https://localhost`; must equal `https://` plus `RP_ID`, without a custom port |
 | `RP_ID` | `localhost`; must match the server's WebAuthn RP ID and the registered credential |
-| `DB_HOST` / `DB_PORT` | `127.0.0.1` / `5316`; MySQL target |
+| `DB_HOST` / `DB_PORT` | Required explicit MySQL target; no default host or port |
 | `DB_SSL_CA` | Optional CA path; when set enables certificate and hostname verification |
-| `ALLOW_LOOPBACK_DB_PLAINTEXT` | Only `1` permits the development exception for exact loopback host strings; the sample enables it |
+| `ALLOW_LOOPBACK_DB_PLAINTEXT` | Only `1` permits the development exception for exact loopback host strings; enable it explicitly only for your chosen loopback development target |
 | `SESSION_TTL_SECONDS` | `300`; absolute authenticated lifetime in seconds, allowed range 1–3600 |
 
 For a remote MySQL server, use a certificate-matching database hostname and `DB_SSL_CA`, and remove the loopback exception. Browser HTTPS and database TLS are separate connections.
@@ -117,15 +128,27 @@ caddy run --config Caddyfile.local --adapter caddyfile
 
 Use the existing trusted local Caddy installation from the [HTTPS setup reference](new-application.md#step-8-point-local-https-at-the-new-application). Local certificate trust and permission to bind port 443 must already be configured. This changes the local `https://localhost` target to backend 5003; stop the old Flask process if it is no longer needed. See [Caddy's command documentation](https://caddyserver.com/docs/command-line).
 
-Open **https://localhost**. You should see **Sign in with your YubiKey**. Opening the raw backend redirects to the configured HTTPS origin.
+Open **https://localhost**. You should see **Sign in with your passkey**. Opening the raw backend redirects to the configured HTTPS origin.
 
 **Checkpoint:** the browser shows one username/password form and one sign-in button. If it shows three columns, HTTPS is still targeting the original demo. Check the proxy configuration above and reload it from `gateway_login_app`, then refresh the browser. Running the new Flask process alone does not change an existing proxy's target.
+
+## Register a passkey from the login page
+
+For a provisioned account whose WebAuthn factor is not yet enrolled:
+
+1. On `/login`, choose **Register a passkey**.
+2. Enter the existing MySQL username and password.
+3. Connect a compatible FIDO2 security key and choose **Register security-key passkey**.
+4. Complete the browser’s security-key PIN verification and touch prompt.
+5. Wait for MySQL to accept registration, then choose **Continue to sign in**.
+
+Registration does not create a database account or sign the user in. The PIN stays in the browser/key interaction. The gateway still requires the supported packed ES256/x5c attestation; platform/cloud passkeys are not broadly supported by this prototype.
 
 ## Step 6 Sign in using the key
 
 1. Insert your registered YubiKey.
 2. Enter the enrolled MySQL username and its password.
-3. Click **Sign in with YubiKey**.
+3. Click **Sign in with security key**.
 4. Follow the browser's prompt and touch the key.
 5. Wait for MySQL to verify the assertion. Success opens `/main`.
 
@@ -179,7 +202,12 @@ HELLO_SQL = (
     'CONNECTION_ID() AS connection_id'
 )
 
-app, auth = create_gateway_app(Path(__file__).parent)
+app, auth = create_gateway_app(
+    Path(__file__).parent,
+    auth_base_template='auth/base.html',
+    login_template='auth/login.html',
+    registration_template='auth/register.html',
+)
 
 @app.get('/main')
 @auth.login_required
@@ -236,13 +264,16 @@ Internal worker, registry, route, and message methods implement these helpers; a
 
 | Utility HTTP endpoint | Operation |
 | --- | --- |
+| `GET /register` | Render the editable registration page, linked from login |
+| `POST /api/register` | Existing account username/password; starts an owner-bound enrollment flow |
+| `GET /api/register/<flow_id>`, `POST /api/register/<flow_id>/respond` | Poll and answer registration; success does not authorize a login |
 | `GET /`, `GET /login` | Choose the login or protected main page |
 | `POST /api/login` | JSON `username`, `password`; returns 202 and `flow_id` |
 | `GET /api/login/<flow_id>` | Owner-bound events: `waiting`, `webauthn`, `success`, `error`; success sets the rotated cookie |
 | `POST /api/login/<flow_id>/respond` | JSON `request_id` plus `credential` or `error`; validates the pending browser reply |
 | `POST /api/logout` | Revoke the current session and return the login redirect |
 
-All POST requests require the exact `Origin` and page `X-CSRF-Token`. The library's `/_gateway/static/common.js` supplies the token. The application main page loads it and the shared stylesheet through `url_for('gateway_auth.static', filename=...)`; only `main.js` belongs to the application. Login's success response updates the HttpOnly cookie; the new main page supplies the rotated CSRF token. Protected application endpoints are `GET /main` and `POST /api/hello`.
+All POST requests require the exact `Origin` and page `X-CSRF-Token`. The JSON helper supplies the token. The authentication templates load the editable copies under `static/auth/`; the application main page loads the library helper and stylesheet through `gateway_auth.static`, plus its own `main.js`. Login's success response updates the HttpOnly cookie; the new main page supplies the rotated CSRF token. Protected application endpoints are `GET /main` and `POST /api/hello`.
 
 ## Extend and verify
 
@@ -262,7 +293,7 @@ The tests exercise actual Connector/Python packets and signed software-key asser
 - Maximum 32 pending/active session entries, 32 broker flows retained until their 150-second deadline, and eight queued tasks per session. A worker thread and MySQL connection are retained for each successful login until logout, expiry, or failure. Plan database connection capacity accordingly.
 - Authenticated lifetime defaults to five minutes and is absolute, independent of browser activity. Cleanup checks run every 250 ms while idle. In-flight database operations can delay closure until their read/write timeout. A pending browser prompt has its own 150-second deadline.
 - Database connect/read/write timeouts are 10/15/10 seconds. A query response waits up to 20 seconds. Timed-out requests invalidate the session rather than reconnecting with retained credentials.
-- Application SQL can use managed transaction contexts and parameterized cursors. The utility provides no arbitrary-SQL HTTP endpoint, shared-account pool, registration/provisioning UI, profile manager, or distributed session implementation. Core registration remains available through `Gateway.register()`.
+- Application SQL can use managed transaction contexts and parameterized cursors. The utility provides no arbitrary-SQL HTTP endpoint, shared-account pool, account-provisioning UI, profile manager, or distributed session implementation. Core registration remains available through `Gateway.register()`.
 - The Flask development server and local internal certificate support this tutorial. Production use needs an appropriate WSGI server, trusted HTTPS, access/rate controls, and deliberate process and session lifecycle management. See the [general limitations](user-manual.md#limitations).
 
 To restore the original demo after finishing, reload `Caddyfile.local` from the gateway repository root (backend 5001), or the registration tutorial's project configuration (backend 5002).

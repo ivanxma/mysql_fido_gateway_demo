@@ -197,7 +197,7 @@ class WebTests(unittest.TestCase):
         from app import create_app
         for timeout in (10, 300):
             with self.subTest(timeout=timeout):
-                with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
+                with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
                                              'ADMIN_TOKEN': 'test-admin-token'}):
                     app = create_app(gateway=object())
                     client = app.test_client()
@@ -241,7 +241,7 @@ class WebTests(unittest.TestCase):
 
     def test_admin_setup_reports_mysql_failure(self):
         from app import create_app
-        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
+        with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
                                      'ADMIN_TOKEN': 'test-admin-token'}):
             client = create_app(gateway=object()).test_client()
             client.get('/', base_url='https://localhost')
@@ -259,7 +259,7 @@ class WebTests(unittest.TestCase):
 
     def test_local_navigation_redirects_to_https_origin(self):
         from app import create_app
-        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+        with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
             client = create_app(gateway=object()).test_client()
         for address in ('http://127.0.0.1:5001', 'http://localhost:5001'):
             response = client.get('/', base_url=address)
@@ -272,7 +272,7 @@ class WebTests(unittest.TestCase):
 
     def test_origin_csrf_and_cross_session(self):
         from app import create_app
-        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+        with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
             app = create_app(gateway=object())
         first, second = app.test_client(), app.test_client()
         self.assertEqual(first.get('/', base_url='https://localhost').status_code, 200)
@@ -294,7 +294,7 @@ class WebProtocolTests(unittest.TestCase):
         try:
             gateway = Gateway({'host': '127.0.0.1', 'port': server.port, 'ssl_disabled': True},
                               'https://localhost', 'localhost', allow_loopback_plaintext=True)
-            with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+            with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
                 app = create_app(gateway=gateway)
             browser = app.test_client()
             browser.get('/', base_url='https://localhost')

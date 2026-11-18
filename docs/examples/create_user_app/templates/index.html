@@ -6,7 +6,7 @@
 <div class="activity" role="status" aria-live="polite"><p id="status">Ready.</p><pre id="commands"></pre><pre id="result"></pre></div>
 <section><form data-action="create"><label>Administrator token *<input name="admin_token" value="{{ admin_token }}" autocomplete="off" required></label>
 <label>MySQL root password *<input name="root_password" type="password" autocomplete="off" required></label>
-<label>New MySQL username *<input name="username" value="demo_tutorial" pattern="demo_[A-Za-z0-9_]+" maxlength="32" required></label>
+<label>New MySQL username *<input name="username" placeholder="Enter your MySQL username" pattern="demo_[A-Za-z0-9_]+" maxlength="32" required></label>
 <label>New user password *<input name="password" type="password" autocomplete="new-password" required></label>
 <button {% if not admin_enabled %}disabled{% endif %}>Create user</button></form></section>
 </main></body></html>

@@ -16,7 +16,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'docs/examples'
 class ActionTutorialTests(unittest.TestCase):
     def browser(self, folder, gateway):
         factory = runpy.run_path(str(EXAMPLES / folder / 'app.py'))['create_app']
-        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
+        with patch.dict(os.environ, {'DB_HOST': '127.0.0.1', 'DB_PORT': '5316', 'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost',
                                     'ADMIN_TOKEN': 'synthetic-demo-token', 'DB_ACCOUNT_HOST': 'localhost'}):
             app = factory(gateway)
             client = app.test_client()

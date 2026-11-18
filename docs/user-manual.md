@@ -2,6 +2,8 @@
 
 ## Overview
 
+For a first install, follow [Getting started without cloning](../GETTING_STARTED.md): install the wheel URL, run `newapp`, provide MySQL host/port, and open the generated start launcher. Source checkout commands below are the contributor/reference-demo path. This personal MIT-licensed tutorial is not an Oracle product; see [DISCLAIMER.md](../DISCLAIMER.md).
+
 The gateway connects a user's browser to MySQL's existing `authentication_webauthn` authentication plugin. The user enters their MySQL account password, then uses a YubiKey attached to their own computer. The browser manages the key interaction; the gateway relays the challenge and response; MySQL accepts or rejects the authentication.
 
 The repository contains a reusable Python package and a Flask reference application. The application provides server setup, account creation, key registration, and login followed by a `hello world` query. It does not maintain a separate application passkey database or authenticate users through a shared database account.
@@ -14,7 +16,7 @@ The browser and YubiKey are on the user's computer. The gateway service includes
 
 The package is an experimental interoperability prototype. A passing simulator test does not establish compatibility with a particular MySQL server, browser, or hardware key. See [limitations](#limitations) before selecting a deployment profile.
 
-## Using library 0.2.0 in an application
+## Using library 0.3.0 in an application
 
 | Application | Library entry point | Authenticated connection |
 | --- | --- | --- |
@@ -23,7 +25,7 @@ The package is an experimental interoperability prototype. A passing simulator t
 | Protected Flask business application | `flask_login.create_gateway_app()` | Retained per login until logout, expiry, restart, or failure; application SQL uses `auth.getConnection()` |
 | Custom framework/transport | `Gateway.register()` / `Gateway.connect()` | Registration closes its own connection; application owns a successful login connection |
 
-All entries come from the `mysql_fido_gateway` package; install the wheel with `[flask]` for the Flask utilities. The retained-login factory supplies the login UI and shared browser assets, while your application supplies its main page and business routes. Its SQL context supports bound parameters, multiple rows, writes, and commit/rollback cleanup. The MySQL account's grants and application authorization govern access.
+All entries come from the `mysql_fido_gateway` package; install the wheel with `[flask]` for the Flask utilities. The retained-login factory supplies linked login/registration Jinja templates and shared browser JavaScript. Your application can override the templates, branding, and stylesheet, and supplies its main page and business routes. Its SQL context supports bound parameters, multiple rows, writes, and commit/rollback cleanup. The MySQL account's grants and application authorization govern access.
 
 See the [wheel installation and migration guide](flask-wheel.md), [login/main tutorial](login-main-tutorial.md), and [Flask API reference](api-reference.md#flask-login-and-sql-api). The three-in-one reference application's operation is described below.
 
@@ -104,10 +106,11 @@ Run from the repository root:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip wheel . --no-deps --wheel-dir dist
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+.venv/bin/python scripts/build_release.py
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 cp config.example.env .env
+# Edit .env: set your DB_HOST, DB_PORT and CA/TLS choice before starting.
 ./start.sh
 ```
 
@@ -117,9 +120,9 @@ Review `.env` before running: the launcher sources it as shell code. Do not put 
 
 The current local launcher:
 
-- Uses `.venv/bin/python` without requiring virtual-environment activation, checks for the installed 0.2.0 wheel, and uses isolated imports to avoid loading the adjacent source package.
+- Uses `.venv/bin/python` without requiring virtual-environment activation, checks for the installed 0.3.0 wheel, and uses isolated imports to avoid loading the adjacent source package.
 - Sets `RP_ID=localhost` and `BROWSER_ORIGIN=https://localhost`, overriding remote example values in the shell or `.env`.
-- Defaults the database to `127.0.0.1:5316` and permits the documented loopback database exception when no CA or explicit override is set.
+- Requires an explicit MySQL host/port; configure `DB_HOST` and `DB_PORT`. A local TLS exception requires an explicit opt-in; remote databases require verified TLS.
 - Generates an administrator token when it is unset for the local origin, and prints the configured/generated token. An explicitly empty token disables administrator actions.
 - Reloads or starts Caddy with `Caddyfile.local`, forwarding HTTPS to Flask at `127.0.0.1:5001`.
 
@@ -213,7 +216,7 @@ Use a database hostname matching its database TLS certificate. Browser HTTPS and
 
 | Symptom | Check |
 | --- | --- |
-| Missing/wrong library or an editable install | Install the 0.2.0 wheel with `[flask]` in the correct virtual environment, then run `python app.py --check-library` from the reference app directory |
+| Missing/wrong library or an editable install | Install the 0.3.0 wheel with `[flask]` in the correct virtual environment, then run `python app.py --check-library` from the reference app directory |
 | Copied main page has missing scripts/styles | Load common.js and style.css from `gateway_auth.static`; keep the application's main.js under its own static endpoint |
 | Login session ends after an update/restart | Sign in again; a signed cookie cannot restore the lost in-memory authenticated connection |
 | Connection/cursor used outside its context | Keep `auth.getConnection()` and all cursor operations inside the protected request's `with` block; use `auth.run()` for native driver features |

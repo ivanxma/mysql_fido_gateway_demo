@@ -1,8 +1,12 @@
 # Browser → MySQL FIDO gateway prototype
 
+**Independent personal prototype/tutorial by ivanxma. Not an Oracle product, endorsement, support offering, or warranty.** See [DISCLAIMER.md](DISCLAIMER.md).
+
+**Start without cloning:** [install the public wheel URL and generate an app](GETTING_STARTED.md), or download the starter ZIP and open its start launcher. MySQL host and port are explicitly supplied by the operator.
+
 See the [gateway documentation](docs/README.md) for the user manual, requirements and limitations, API and configuration references, integration samples, and glossary.
 
-For reusable Flask applications, see [the wheel and `getConnection()` guide](docs/flask-wheel.md). The package includes login UI, parameterized SQL, multiple rows, and transaction contexts on each user's authenticated connection.
+For reusable Flask applications, see [the wheel and `getConnection()` guide](docs/flask-wheel.md). The package includes editable login/registration templates and browser JavaScript, parameterized SQL, multiple rows, and transaction contexts on each user's authenticated connection.
 
 Build applications using three separate tutorials: [1. Create user](docs/create-user-tutorial.md), [2. Register YubiKey](docs/registration-tutorial.md), and [3. Login and main page](docs/login-main-tutorial.md). Each has a minimal `app.py` and delegates Flask setup and message handling to utility modules. The login tutorial ends on a protected main page with a Hello World button.
 
@@ -52,7 +56,7 @@ Supported prototype profile:
   the **same connection**. A login's `hello world` query uses that user's
   MySQL-accepted connection, then closes it. No shared-account pool.
 
-## Library 0.2.0
+## Library 0.3.0
 
 The wheel provides three application interfaces:
 
@@ -103,8 +107,7 @@ needed for `SELECT 'hello world'`; grant only the application's actual needs.
 ## 2. Install and configure Python
 
 For the local demo, after installing the dependencies below, run `./start.sh`.
-It uses `.venv`, defaults to MySQL at `127.0.0.1:5316`, and explicitly enables
-the local database TLS exception. It prints a temporary administrator token for
+It uses `.venv` and requires the actual MySQL `DB_HOST` and `DB_PORT`; neither is assumed. The loopback database TLS exception must be explicitly configured for local development. It prints a temporary administrator token for
 the Create user form. The token changes on each start unless you configure one.
 Stop with Ctrl+C. Install Caddy first; the launcher reloads or starts it to serve
 `https://localhost`. Visits to the local Flask address redirect to that HTTPS URL.
@@ -121,8 +124,8 @@ to reuse it. Remote databases still require verified TLS.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip wheel . --no-deps --wheel-dir dist
-python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+python scripts/build_release.py
+python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 python app.py --check-library
 
 export DB_HOST=127.0.0.1
@@ -132,7 +135,7 @@ export BROWSER_ORIGIN=https://demo.example.com
 export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 ```
 
-The three-in-one `app.py` uses `create_demo_app()` from the installed **0.2.0 wheel**. Its template and browser assets remain in this project. Both direct startup and `start.sh` use isolated Python imports to keep the adjacent source package from shadowing the installed library. `--check-library` prints the selected version and install location without starting Flask or connecting to MySQL. Skip the build command when installing a supplied wheel; rebuild and reinstall after changing library code.
+The three-in-one `app.py` uses `create_demo_app()` from the installed **0.3.0 wheel**. Its template and browser assets remain in this project. Both direct startup and `start.sh` use isolated Python imports to keep the adjacent source package from shadowing the installed library. `--check-library` prints the selected version and install location without starting Flask or connecting to MySQL. Skip the build command when installing a supplied wheel; rebuild and reinstall after changing library code.
 
 For a local loopback database during testing, explicitly allow the development
 exception to mandatory DB certificate validation:
@@ -232,7 +235,7 @@ There are no terminal prompts for remote users. The gateway never invokes
 For a custom transport, install the core wheel without the optional Flask extra:
 
 ```bash
-python -m pip install "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl"
+python -m pip install "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl"
 ```
 
 For a Flask application, install the same wheel with `[flask]` and follow the [login/main tutorial](docs/login-main-tutorial.md).
@@ -328,3 +331,7 @@ before considering production. The live MySQL/YubiKey gate is unresolved here.
 No Oracle source code is bundled. The prototype uses the installed
 Connector/Python dependency and documented/inspected protocol behavior; review
 that dependency's license terms for your intended distribution.
+
+## License and third-party software
+
+Original source, templates, JavaScript, and documentation are [MIT licensed](LICENSE), copyright 2026 ivanxma. Dependencies retain their [own licenses](THIRD_PARTY_LICENSES.md), including Connector/Python’s GPLv2 with Universal FOSS Exception. No Oracle authorship, endorsement, support, or warranty is claimed. See the [personal-project disclaimer](DISCLAIMER.md).

@@ -16,6 +16,7 @@ from flask import Blueprint, Flask, current_app, g, jsonify, redirect, render_te
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
+from mysql_fido_gateway.config import mysql_config, loopback_allowed
 
 
 class SessionEnded(Exception):
@@ -224,10 +225,17 @@ class _Cursor:
 class GatewayLogin:
     """Install FIDO login routes and per-user, worker-owned SQL access."""
 
-    def __init__(self, app, gateway, origin, *, session_seconds=300, clock=time.monotonic):
+    def __init__(self, app, gateway, origin, *, session_seconds=300, clock=time.monotonic,
+                 login_template='mysql_fido_gateway/login.html',
+                 registration_template='mysql_fido_gateway/register.html',
+                 auth_base_template='mysql_fido_gateway/auth_base.html'):
         self.app, self.gateway, self.origin = app, gateway, origin
+        self.login_template = login_template
+        self.registration_template = registration_template
+        self.auth_base_template = auth_base_template
         self.session_seconds, self.clock = session_seconds, clock
         self.broker = Broker()
+        self.registration_broker = Broker()
         self.logins = {}
         self.lock = threading.Lock()
         app.register_blueprint(Blueprint('gateway_auth', __name__,
@@ -235,15 +243,26 @@ class GatewayLogin:
                                static_url_path='/_gateway/static'))
         app.add_url_rule('/', 'index', self.index)
         app.add_url_rule('/login', 'login', self.login)
+        app.add_url_rule('/register', 'register', self.register)
+        app.add_url_rule('/api/register', 'start_register', self.start_register, methods=['POST'])
+        app.add_url_rule('/api/register/<flow_id>', 'poll_register', self.poll_register)
+        app.add_url_rule('/api/register/<flow_id>/respond', 'respond_register', self.respond_register, methods=['POST'])
         app.add_url_rule('/api/login', 'start_login', self.start_login, methods=['POST'])
         app.add_url_rule('/api/login/<flow_id>', 'poll_login', self.poll_login)
         app.add_url_rule('/api/login/<flow_id>/respond', 'respond_login', self.respond_login, methods=['POST'])
         app.add_url_rule('/api/logout', 'logout', self.logout, methods=['POST'])
         app.before_request(self.protect)
-        app.context_processor(lambda: {'csrf': session['csrf']})
+        app.context_processor(self.template_context)
         app.register_error_handler(SessionEnded, self.session_ended)
         app.register_error_handler(BridgeError, lambda error: (jsonify(error=str(error)), 400))
         atexit.register(self.close)
+
+    def template_context(self):
+        target = getattr(self.gateway, 'db_config', {})
+        if not isinstance(target, dict):
+            target = {}
+        return {'csrf': session['csrf'], 'auth_base_template': self.auth_base_template,
+                'mysql_target': target.get('host'), 'mysql_port': target.get('port')}
 
     def current(self):
         with self.lock:
@@ -352,11 +371,13 @@ class GatewayLogin:
         return redirect('/main' if self.current() else '/login')
 
     def login(self):
-        return redirect('/main') if self.current() else render_template('mysql_fido_gateway/login.html')
+        return redirect('/main') if self.current() else render_template(self.login_template)
 
-    def start_login(self):
-        if self.current():
-            return jsonify(error='Log out before signing in again.'), 409
+    def register(self):
+        return redirect('/main') if self.current() else render_template(self.registration_template)
+
+    @staticmethod
+    def credentials():
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise BridgeError('Expected a JSON object')
@@ -366,7 +387,64 @@ class GatewayLogin:
             raise BridgeError('Use a provisioned non-root MySQL username')
         if not isinstance(password, str) or not password or len(password) > 1024:
             raise BridgeError('Enter your MySQL password')
+        return username, password
+
+    def start_register(self):
+        if self.current():
+            return jsonify(error='Log out before registering a key.'), 409
+        username, password = self.credentials()
+        owner = session['owner']
+        # A separate broker prevents a registration event being consumed by the
+        # login endpoint and accidentally authorizing/rotating a login session.
         with self.lock:
+            login = self.logins.get(owner)
+            if login and login.alive():
+                raise BridgeError('Finish the current login before registering a key')
+            flow = self.registration_broker.create(owner)
+        threading.Thread(target=self.registration_worker,
+                         args=(flow, username, [password]), daemon=True).start()
+        return jsonify(flow_id=flow.id), 202
+
+    def registration_worker(self, flow, username, credentials):
+        password = credentials.pop()
+        try:
+            result = self.gateway.register(username, password, flow.ask)
+            if result.get('registered') is not True:
+                raise BridgeError('MySQL did not accept registration')
+            flow.finish({'type': 'success', 'result': {
+                'registered': True, 'message': 'Your passkey is registered. You can now sign in.'}})
+        except Exception as error:
+            message = (f'MySQL registration failed (error {error.errno}). Check your account details.'
+                       if isinstance(error, mysql.connector.Error)
+                       else 'Registration was cancelled or could not be completed. Try again with a compatible security key.')
+            flow.finish({'type': 'error', 'message': message})
+        finally:
+            password = None
+
+    def poll_register(self, flow_id):
+        flow = self.registration_broker.get(flow_id, session['owner'])
+        try:
+            event = flow.events.get(timeout=1)
+        except queue.Empty:
+            event = {'type': 'waiting'}
+        return jsonify(event)
+
+    def respond_register(self, flow_id):
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or not isinstance(body.get('request_id'), str):
+            raise BridgeError('Expected request_id and browser response')
+        self.registration_broker.get(flow_id, session['owner']).respond(body['request_id'], body)
+        return jsonify(accepted=True)
+
+    def start_login(self):
+        if self.current():
+            return jsonify(error='Log out before signing in again.'), 409
+        username, password = self.credentials()
+        with self.lock:
+            with self.registration_broker.lock:
+                if any(flow.owner == session['owner'] and not flow.done and time.monotonic() < flow.deadline
+                       for flow in self.registration_broker.flows.values()):
+                    raise BridgeError('Finish the current registration before signing in')
             if len(self.logins) >= 32:
                 raise BridgeError('All sessions are busy. Try again later.')
             flow = self.broker.create(session['owner'])
@@ -450,7 +528,11 @@ def get_connection():
 getConnection = get_connection
 
 
-def create_gateway_app(root, gateway=None, *, session_seconds=None, clock=time.monotonic):
+def create_gateway_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None,
+                       session_seconds=None, clock=time.monotonic,
+                       login_template='mysql_fido_gateway/login.html',
+                       registration_template='mysql_fido_gateway/register.html',
+                       auth_base_template='mysql_fido_gateway/auth_base.html'):
     """Create Flask, configure Gateway from the environment, and install login routes.
 
     Return (app, auth). root contains templates/static. gateway and clock can be
@@ -472,14 +554,12 @@ def create_gateway_app(root, gateway=None, *, session_seconds=None, clock=time.m
                       SESSION_COOKIE_SAMESITE='Strict', MAX_CONTENT_LENGTH=131072,
                       TRUSTED_HOSTS=[rp_id, '127.0.0.1'] if rp_id == 'localhost' else [rp_id])
     if gateway is None:
-        config = dict(host=os.environ.get('DB_HOST', '127.0.0.1'),
-                      port=int(os.environ.get('DB_PORT', '5316')),
-                      connection_timeout=10, read_timeout=15, write_timeout=10)
-        if os.environ.get('DB_SSL_CA'):
-            config.update(ssl_ca=os.environ['DB_SSL_CA'], ssl_verify_cert=True, ssl_verify_identity=True)
+        config = mysql_config(db_config)
         gateway = Gateway(config, origin, rp_id,
-                          allow_loopback_plaintext=os.environ.get('ALLOW_LOOPBACK_DB_PLAINTEXT') == '1')
-    auth = GatewayLogin(app, gateway, origin, session_seconds=ttl, clock=clock)
+                          allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext))
+    auth = GatewayLogin(app, gateway, origin, session_seconds=ttl, clock=clock,
+                        login_template=login_template, registration_template=registration_template,
+                        auth_base_template=auth_base_template)
     app.extensions['gateway_login'] = auth
 
     @app.after_request

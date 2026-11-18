@@ -39,8 +39,8 @@ mkdir ../tutorial_create_user
 cd ../tutorial_create_user
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip wheel "${GATEWAY_SOURCE}" --no-deps --wheel-dir "${GATEWAY_SOURCE}/dist"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+python "${GATEWAY_SOURCE}/scripts/build_release.py"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 cp -R "${GATEWAY_SOURCE}/docs/examples/create_user_app/." .
 ```
 
@@ -90,13 +90,13 @@ If Caddy is not running, use `caddy run --config Caddyfile.local --adapter caddy
 
 Open **https://localhost**. The page title must be **Create a MySQL user**, with a single form. The configured demo administrator token is visible and prefilled. A three-column page means the proxy still targets the combined demo on 5001; reload the configuration from this new project directory, which targets 5004.
 
-The [configuration reference](configuration.md) explains the database settings. The sample opts into the explicit loopback database exception; remote MySQL requires a CA and certificate/hostname verification. `DB_ACCOUNT_HOST` must match the source host MySQL sees for the gateway.
+The [configuration reference](configuration.md) explains the database settings. The sample requires an explicit CA/TLS setting or a deliberate loopback database exception; remote MySQL requires a CA and certificate/hostname verification. `DB_ACCOUNT_HOST` must match the source host MySQL sees for the gateway.
 
 ## Step 5 Create the account
 
 1. Use the displayed administrator token.
 2. Enter the MySQL root password.
-3. Keep username `demo_tutorial`, or choose another fresh `demo_` username.
+3. Enter username `demo_tutorial`, or enter another fresh `demo_` username.
 4. Enter a new, unique password for that user.
 5. Click **Create user**.
 

@@ -1,0 +1,15 @@
+{% extends "mysql_fido_gateway/login.html" %}
+{% block title %}Sign in · My application{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='auth/webauthn.js') }}" defer></script>
+<script src="{{ url_for('static', filename='auth/login.js') }}" defer></script>
+{% endblock %}
+{% block form %}
+<form id="login" action="{{ url_for('start_login') }}" method="post">
+<label for="username">MySQL username <span aria-hidden="true">*</span></label>
+<input id="username" name="username" autocomplete="username" required maxlength="32" placeholder="Your username">
+<label for="password">MySQL password <span aria-hidden="true">*</span></label>
+<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Your account password">
+<button type="submit">Sign in with security key</button>
+</form>
+{% endblock %}

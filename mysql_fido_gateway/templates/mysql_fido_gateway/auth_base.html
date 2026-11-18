@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}">
+<title>{% block title %}Account access{% endblock %}</title>
+{% block styles %}<link rel="stylesheet" href="{{ url_for('gateway_auth.static', filename='style.css') }}">{% endblock %}
+{% block common_scripts %}<script src="{{ url_for('gateway_auth.static', filename='common.js') }}" defer></script>{% endblock %}
+{% block scripts %}{% endblock %}
+</head>
+<body class="auth-page"><main class="auth-shell">
+<a class="auth-brand" href="{{ url_for('login') }}">{% block brand %}MYSQL · BROWSER GATEWAY{% endblock %}</a>
+<div class="auth-layout">
+<aside class="auth-intro"><span class="auth-eyebrow">YOUR ACCOUNT. YOUR KEY.</span>
+<h1>{% block heading %}Secure access starts here.{% endblock %}</h1>
+<p>{% block introduction %}Use your database password and a security-key passkey to access your application.{% endblock %}</p>
+<div class="auth-assurance"><span aria-hidden="true">✓</span> Your private key stays on your security key.</div>
+{% block help %}{% endblock %}
+</aside>
+<section class="auth-card" aria-labelledby="form-title">{% block content %}{% endblock %}</section>
+</div>
+<footer class="auth-footer">{% if mysql_target %}<div>MySQL: {{ mysql_target }}:{{ mysql_port }}</div>{% endif %}{% block footer %}Keep your security key connected and follow your browser’s prompts.{% endblock %}<div>Personal prototype/tutorial · Not an Oracle product or support offering.</div></footer>
+</main></body></html>

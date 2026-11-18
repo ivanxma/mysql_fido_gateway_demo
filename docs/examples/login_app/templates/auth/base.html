@@ -1,0 +1,9 @@
+{% extends "mysql_fido_gateway/auth_base.html" %}
+{% block brand %}MYSQL · APPLICATION DEMO{% endblock %}
+{% block styles %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
+{% endblock %}
+{% block common_scripts %}
+<script src="{{ url_for('static', filename='auth/common.js') }}" defer></script>
+{% endblock %}

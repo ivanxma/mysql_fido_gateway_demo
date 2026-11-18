@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mysql-browser-fido-gateway"
-version = "0.2.0"
+version = "0.3.0"
 description = "Experimental browser transport for MySQL native WebAuthn authentication"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "DISCLAIMER.md", "THIRD_PARTY_LICENSES.md", "licenses/third-party/*"]
 requires-python = ">=3.10"
 dependencies = ["mysql-connector-python==26.10.0", "cbor2==5.9.0"]
 
@@ -14,8 +17,11 @@ demo = ["Flask==3.1.3"]
 flask = ["Flask==3.1.3"]
 test = ["cryptography>=44"]
 
+[project.scripts]
+mysql-fido = "mysql_fido_gateway.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["mysql_fido_gateway*"]
 
 [tool.setuptools.package-data]
-mysql_fido_gateway = ["templates/mysql_fido_gateway/*.html", "static/*.js", "static/*.css"]
+mysql_fido_gateway = ["templates/mysql_fido_gateway/*.html", "static/*.js", "static/*.css", "starter/**/*", "starter/*", "starter/.gitignore"]

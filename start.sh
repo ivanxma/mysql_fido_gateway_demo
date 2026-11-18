@@ -27,8 +27,11 @@ fi
 # -I prevents this checkout's package from shadowing the installed wheel.
 "$PYTHON_BIN" -I "$PWD/app.py" --check-library
 
-export DB_HOST="${DB_HOST:-127.0.0.1}"
-export DB_PORT="${DB_PORT:-5316}"
+if [[ -z "${DB_HOST:-}" || -z "${DB_PORT:-}" ]]; then
+    echo 'Set DB_HOST and DB_PORT explicitly in .env or the environment. No MySQL endpoint is assumed.' >&2
+    exit 1
+fi
+export DB_HOST DB_PORT
 export RP_ID="${RP_ID:-localhost}"
 export BROWSER_ORIGIN="${BROWSER_ORIGIN:-https://$RP_ID}"
 export DB_ACCOUNT_HOST="${DB_ACCOUNT_HOST:-localhost}"
@@ -42,11 +45,10 @@ if [[ "$START_MODE" == local ]]; then
     export BROWSER_ORIGIN=https://localhost
 fi
 
-# This launcher opts into the documented exception only for local MySQL.
-if [[ -z "${DB_SSL_CA:-}" && -z "${ALLOW_LOOPBACK_DB_PLAINTEXT+x}" ]]; then
-    case "$DB_HOST" in
-        127.0.0.1|localhost|::1) export ALLOW_LOOPBACK_DB_PLAINTEXT=1 ;;
-    esac
+# TLS/loopback development mode is an operator choice, never inferred.
+if [[ -z "${DB_SSL_CA:-}" && "${ALLOW_LOOPBACK_DB_PLAINTEXT:-}" != 1 ]]; then
+    echo 'Set DB_SSL_CA for verified TLS, or explicitly set ALLOW_LOOPBACK_DB_PLAINTEXT=1 for loopback development.' >&2
+    exit 1
 fi
 
 # Enable the administrator form by default for the local browser demo.

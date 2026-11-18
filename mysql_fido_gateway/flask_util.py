@@ -14,9 +14,10 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
+from mysql_fido_gateway.config import mysql_config, loopback_allowed
 
 
-def _create_app(root, actions, gateway=None):
+def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
     app = Flask(__name__, root_path=str(root.resolve()))
     origin = os.environ.get('BROWSER_ORIGIN', 'https://localhost').rstrip('/')
     rp_id = os.environ.get('RP_ID', 'localhost')
@@ -30,13 +31,10 @@ def _create_app(root, actions, gateway=None):
                       SESSION_COOKIE_SAMESITE='Strict', MAX_CONTENT_LENGTH=131072,
                       TRUSTED_HOSTS=([urlsplit(origin).hostname, '127.0.0.1']
                                      if origin == 'https://localhost' else [urlsplit(origin).hostname]))
-    db_config = {'host': os.environ.get('DB_HOST', '127.0.0.1'),
-                 'port': int(os.environ.get('DB_PORT', '5316')),
-                 'connection_timeout': 10, 'read_timeout': 180, 'write_timeout': 15}
-    if os.environ.get('DB_SSL_CA'):
-        db_config.update(ssl_ca=os.environ['DB_SSL_CA'], ssl_verify_cert=True, ssl_verify_identity=True)
+    db_config = mysql_config(db_config if db_config is not None else getattr(gateway, 'db_config', None),
+                             read_timeout=180, write_timeout=15)
     gateway = gateway or Gateway(db_config, origin, rp_id,
-                                allow_loopback_plaintext=os.environ.get('ALLOW_LOOPBACK_DB_PLAINTEXT') == '1')
+                                allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext))
     broker = Broker()
     app.extensions.update(browser_gateway=gateway, ceremony_broker=broker)
 
@@ -67,7 +65,8 @@ def _create_app(root, actions, gateway=None):
     def index():
         return render_template('index.html', csrf=session['csrf'], origin=origin, rp_id=rp_id,
                                admin_enabled=bool(os.environ.get('ADMIN_TOKEN')),
-                               admin_token=os.environ.get('ADMIN_TOKEN', '') if 'create' in actions else '')
+                               admin_token=os.environ.get('ADMIN_TOKEN', '') if 'create' in actions else '',
+                               db_host=db_config['host'], db_port=db_config['port'])
 
     @app.errorhandler(BridgeError)
     def bridge_error(error):
@@ -220,12 +219,13 @@ def _create_app(root, actions, gateway=None):
     return app
 
 
-def create_demo_app(root, gateway=None):
+def create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
     """Return the combined demo, using templates/static under the Path root."""
-    return _create_app(root, {'setup', 'create', 'register', 'login'}, gateway)
+    return _create_app(root, {'setup', 'create', 'register', 'login'}, gateway,
+                       db_config=db_config, allow_loopback_plaintext=allow_loopback_plaintext)
 
 
-def create_action_app(root, action, gateway=None):
+def create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
     """Return a single-action tutorial: create user or register a YubiKey.
 
     root is a Path containing templates and static. action is 'create' or
@@ -234,4 +234,5 @@ def create_action_app(root, action, gateway=None):
     """
     if action not in {'create', 'register'}:
         raise BridgeError('Choose the create or register tutorial')
-    return _create_app(root, {action}, gateway)
+    return _create_app(root, {action}, gateway, db_config=db_config,
+                       allow_loopback_plaintext=allow_loopback_plaintext)

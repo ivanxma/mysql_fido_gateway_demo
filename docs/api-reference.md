@@ -22,7 +22,7 @@ Gateway(db_config, origin, rp_id, *, allow_loopback_plaintext=False)
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
-| `db_config` | Mapping of Connector/Python options | Required | Non-shared database transport settings; copied into a new dictionary |
+| `db_config` | Mapping of Connector/Python options | Required | Explicit MySQL host and port plus transport/TLS settings; copied into a new dictionary. Username/password are supplied per login, not here |
 | `origin` | `str` | Required | Exact expected browser origin, currently `https://` followed by `rp_id`, without a port/path |
 | `rp_id` | `str` | Required | Expected relying-party ID in MySQL's challenge and the authenticator RP hash |
 | `allow_loopback_plaintext` | `bool`, keyword only | `False` | Permit unverified/plaintext DB transport only when the configured host is exactly `127.0.0.1`, `::1`, or `localhost` |
@@ -228,14 +228,17 @@ These routes and helpers implement a retained login for application SQL. They ar
 ### Factory and authenticated access
 
 ```text
-create_gateway_app(root, gateway=None, *, session_seconds=None, clock=time.monotonic)
+create_gateway_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None, session_seconds=None, clock=time.monotonic,
+                   login_template='mysql_fido_gateway/login.html',
+                   registration_template='mysql_fido_gateway/register.html',
+                   auth_base_template='mysql_fido_gateway/auth_base.html')
 ```
 
-Returns `(app, auth)`. `root` is a `Path` containing the application's templates/static. The library supplies the login template and `gateway_auth.static` assets. `gateway` can inject a compatible authentication object for tests; otherwise environment values construct `Gateway`. `FLASK_SECRET_KEY` is required. `session_seconds` overrides `SESSION_TTL_SECONDS` (default 300, allowed 1–3600); `clock` is an injectable monotonic clock.
+Returns `(app, auth)`. `root` is a `Path` containing the application's templates/static. The library supplies overridable login/registration templates and `gateway_auth.static` assets. The three template options select project-local Jinja files; their defaults use the packaged frontend. `gateway` can inject a compatible authentication object for tests; otherwise `db_config` supplies the explicit MySQL host/port and transport options, or both `DB_HOST` and `DB_PORT` must be set. `allow_loopback_plaintext=True` is an explicit local-development exception; it never enables unverified remote transport. `FLASK_SECRET_KEY` is required. `session_seconds` overrides `SESSION_TTL_SECONDS` (default 300, allowed 1–3600); `clock` is an injectable monotonic clock.
 
-The factory registers `app.extensions['gateway_login']`. It installs `/`, `/login`, `/api/login`, owner-scoped polling/reply routes, and `/api/logout`. The application defines `/main` and business routes, using `@auth.login_required`. Protect POST actions with the exact Origin and current `X-CSRF-Token`; successful login rotates the session owner and token. The bundled browser script loads the new page after success.
+The factory registers `app.extensions['gateway_login']`. It installs `/`, `/login`, `/register`, `/api/login`, `/api/register`, owner-scoped polling/reply routes for both ceremonies, and `/api/logout`. Registration requires the existing MySQL account password, calls `Gateway.register()`, and produces no authenticated session. Separate brokers prevent login/registration flow IDs from being interchanged. The application defines `/main` and business routes, using `@auth.login_required`. Protect POST actions with the exact Origin and current `X-CSRF-Token`; successful login rotates the session owner and token. The bundled browser script loads the new page after success.
 
-`GatewayLogin(app, gateway, origin, *, session_seconds=300, clock=time.monotonic)` installs the same login behavior on an existing Flask app. The caller must supply the secret, secure cookie and trusted-host configuration, response headers, template/static setup, and `app.extensions['gateway_login'] = auth` if module-level connection helpers will be used. Reserve the utility's route/endpoint names; do not install it twice on the same app. The factory applies this configuration automatically.
+`GatewayLogin(app, gateway, origin, *, session_seconds=300, clock=time.monotonic)` installs the same login behavior on an existing Flask app. It accepts the same three optional template keywords as the factory. The caller must supply the secret, secure cookie and trusted-host configuration, response headers, template/static setup, and `app.extensions['gateway_login'] = auth` if module-level connection helpers will be used. Reserve the utility's route/endpoint names; do not install it twice on the same app. The factory applies this configuration automatically.
 
 ### SQL helpers
 
@@ -370,9 +373,23 @@ Install the `flask` extra (or the compatible `demo` extra) to use `mysql_fido_ga
 
 | Function | Parameters | Result |
 | --- | --- | --- |
-| `create_demo_app(root, gateway=None)` | `root`: `pathlib.Path` with the demo's templates/static. Optional `gateway`: injected Gateway-compatible object for tests | Flask app with setup, create, register, and login enabled |
-| `create_action_app(root, action, gateway=None)` | Same `root`/`gateway`. `action`: exactly `create` or `register`; other values raise `BridgeError` | Flask app with only the chosen action enabled; other submitted actions are rejected |
+| `create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None)` | `root`: `pathlib.Path` with the demo's templates/static. Optional `gateway`: injected Gateway-compatible object for tests | Flask app with setup, create, register, and login enabled |
+| `create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None)` | Same `root`/`gateway`. `action`: exactly `create` or `register`; other values raise `BridgeError` | Flask app with only the chosen action enabled; other submitted actions are rejected |
 
 The helpers use the [reference application's environment settings](configuration.md), secure cookies, exact Origin/CSRF checks, one-use broker replies, and background workers. The combined demo uses cookie `gateway_create_login_register_setup`; single-action tutorials use `gateway_create` or `gateway_register`. They intentionally display the configured administrator token on administrator pages for this demo; MySQL passwords and key PINs are not displayed.
 
 Follow the separate [create-user](create-user-tutorial.md) and [registration](registration-tutorial.md) tutorials for complete minimal applications. The [login/main tutorial](login-main-tutorial.md) imports `create_gateway_app` from the wheel's `mysql_fido_gateway.flask_login` module and uses `auth.getConnection()` for application SQL. It retains each user's authenticated connection across requests; the demo/action helpers close connections after each operation.
+
+## New application CLI and runtime helpers
+
+Install the wheel with `[flask]`, then run `mysql-fido newapp` (or `python -m mysql_fido_gateway newapp`). The command asks for an application/folder name, MySQL host and port, and CA/TLS choice. It creates the frontend/configuration/launch files and refuses existing destinations. It never asks for or stores a MySQL account password.
+
+Noninteractive example:
+
+```bash
+python -m mysql_fido_gateway newapp myapp --db-host db.example.com --db-port 3307 --db-ssl-ca /path/to/ca.pem --non-interactive
+```
+
+For an explicitly chosen loopback development target, use `--allow-loopback-plaintext` instead of `--db-ssl-ca`. `--parent DIRECTORY` selects the existing parent directory. Source builds should use `python scripts/build_release.py` to assemble the generator's packaged frontend assets before building the wheel.
+
+`mysql_fido_gateway.runtime.check_library(root)` checks the installed project version/location; `run_demo_app(root, app_factory=None)` owns isolated import startup, the `--check-library` command, and the three-in-one demo listener. Application code delegates these operations to the library.

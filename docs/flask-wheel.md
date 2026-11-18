@@ -1,12 +1,14 @@
 # Flask FIDO wheel and application SQL
 
-The wheel includes the FIDO transport, Flask login/session utility, and bundled login page, JavaScript, and stylesheet. Applications can use their authenticated user's connection for application SQL.
+For a first install, use [Getting started without cloning](../GETTING_STARTED.md). It installs the public wheel URL and generates a named application with explicit MySQL host/port, editable frontend files, and start launchers.
+
+The wheel includes the FIDO transport, Flask login/session utility, and linked login/registration templates, shared WebAuthn JavaScript, and stylesheet. Applications can use their authenticated user's connection for application SQL.
 
 ```bash
-python -m pip install './dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]'
+python -m pip install './dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]'
 ```
 
-Use the actual path to the wheel in another project. The existing `[demo]` extra also works; core `Gateway` imports remain independent of Flask. Provision and register the key first, and use the environment and HTTPS settings in [the login tutorial](login-main-tutorial.md#step-3-set-the-environment).
+Use the actual path to the wheel in another project. The existing `[demo]` extra also works; core `Gateway` imports remain independent of Flask. Have an explicitly configured MySQL target and provisioned account first, and use the environment and HTTPS settings in [the login tutorial](login-main-tutorial.md#step-3-set-the-environment).
 
 ## Package contents and choosing an entry point
 
@@ -15,29 +17,29 @@ Use the actual path to the wheel in another project. The existing `[demo]` extra
 | `mysql_fido_gateway.Gateway` | Framework-independent `register()` / `connect()` with a browser callback | None; the application implements the transport |
 | `mysql_fido_gateway.flask_util.create_demo_app` | Three-in-one setup/create/register/login demo | Application supplies its `templates/` and `static/` directories |
 | `mysql_fido_gateway.flask_util.create_action_app` | Single-purpose create-user or registration form | Application supplies the form template and browser assets |
-| `mysql_fido_gateway.flask_login.create_gateway_app` | Retained Flask login plus application SQL | Bundled login template, login transport scripts, and shared stylesheet |
+| `mysql_fido_gateway.flask_login.create_gateway_app` | Retained Flask login plus application SQL | Overridable login/registration templates, WebAuthn transport scripts, and shared stylesheet |
 
-The wheel contains library modules and the bundled login assets. The repository's `app.py`, three-column demo assets, Caddy configuration, tutorials, and tests are separate application/development files. The three-in-one demo still closes each connection after its form action; `auth.getConnection()` belongs to the retained-login API.
+The wheel contains library modules and the bundled authentication templates and assets. The repository's `app.py`, three-column demo assets, Caddy configuration, tutorials, and tests are separate application/development files. The three-in-one demo still closes each connection after its form action; `auth.getConnection()` belongs to the retained-login API.
 
 ### Run the three-in-one demo
 
 From the repository root with `.venv` created:
 
 ```bash
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 ./start.sh
 ```
 
-`--check-library` prints version 0.2.0 and the package's installed location without starting Flask or connecting to MySQL. The direct script and launcher use isolated Python imports so the source package beside `app.py` does not shadow the installed wheel. The launcher checks the wheel before changing the HTTPS proxy. Follow the [manual](user-manual.md#install-and-start-the-local-reference-application) for MySQL and HTTPS prerequisites.
+`--check-library` prints version 0.3.0 and the package's installed location without starting Flask or connecting to MySQL. The direct script and launcher use isolated Python imports so the source package beside `app.py` does not shadow the installed wheel. The launcher checks the wheel before changing the HTTPS proxy. Follow the [manual](user-manual.md#install-and-start-the-local-reference-application) for MySQL and HTTPS prerequisites.
 
 ### Upgrade or rebuild the library
 
 After changing library source, run from the source checkout:
 
 ```bash
-.venv/bin/python -m pip wheel . --no-deps --wheel-dir dist
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+.venv/bin/python scripts/build_release.py
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 ```
 
@@ -49,6 +51,43 @@ For a copied application outside the source checkout, check its interpreter's in
 python -c "from importlib.metadata import version; import mysql_fido_gateway; print(version('mysql-browser-fido-gateway')); print(mysql_fido_gateway.__file__)"
 ```
 
+## Editable web frontend
+
+The library includes a complete Jinja/JavaScript frontend. The [sample application](examples/login_app/app.py) shows how to customize it:
+
+```text
+templates/auth/base.html      # Shared page layout/branding override
+templates/auth/login.html     # Editable sign-in form
+templates/auth/register.html  # Editable registration form
+static/auth.css              # Application styles
+static/auth/common.js        # Editable JSON/CSRF transport
+static/auth/webauthn.js      # Editable browser credential handling
+static/auth/login.js         # Editable sign-in behavior
+static/auth/register.js      # Editable registration behavior
+static/main.js               # Application business-page behavior
+```
+
+Select project templates when creating the app:
+
+```python
+app, auth = create_gateway_app(
+    Path(__file__).parent,
+    auth_base_template='auth/base.html',
+    login_template='auth/login.html',
+    registration_template='auth/register.html',
+)
+```
+
+The sample base extends `mysql_fido_gateway/auth_base.html`; form templates extend the corresponding library pages and override their `form` blocks. Customize `brand`, `heading`, `introduction`, `styles`, `content`, or `footer` blocks through Jinja inheritance. Without template options, the library defaults render a working frontend.
+
+Login links to `/register`; registration returns to `/login` after MySQL accepts enrollment. Registration uses the existing MySQL account and its password. The browser invokes `navigator.credentials.create()` and handles the security-key PIN/touch locally. It creates neither a new MySQL account nor a logged-in application session. The supported credential remains a compatible external FIDO2 key with packed ES256/x5c attestation.
+
+`gateway_auth.static` serves `common.js`, `webauthn.js`, `login.js`, `register.js`, and `style.css`. The starter also supplies editable copies under `static/auth/` and overrides the template script blocks to load them. Use the package defaults or customize these project files. Shared WebAuthn code serializes both ceremonies; each page script owns its form state, polling, error messages, and success behavior. Password fields clear on submission. Keep script tags external to satisfy the Content Security Policy.
+
+When customizing forms, preserve `id="login"` or `id="register"`, `name="username"`, `name="password"`, the form `action` generated by `url_for('start_login')` / `url_for('start_register')`, a submit button, and the `#status` live region. Registration also uses `#registration-complete` with its sign-in link. No PIN field belongs in application HTML; browser/device UI collects the PIN.
+
+[Desktop sign-in preview](preview/login-desktop.png) · [Registration preview](preview/register-desktop.png) · [Mobile preview](preview/login-mobile.png)
+
 ## Application example
 
 ```python
@@ -56,7 +95,12 @@ from pathlib import Path
 from flask import jsonify, request
 from mysql_fido_gateway.flask_login import create_gateway_app
 
-app, auth = create_gateway_app(Path(__file__).parent)
+app, auth = create_gateway_app(
+    Path(__file__).parent,
+    db_config={'host': 'db.example.com', 'port': 3307,
+               'ssl_ca': '/path/to/mysql-ca.pem',
+               'ssl_verify_cert': True, 'ssl_verify_identity': True},
+)
 
 @app.get('/main')
 @auth.login_required
@@ -144,7 +188,7 @@ Capture validated request values before the callback; Flask `request`, `g`, and 
    <script src="{{ url_for('static', filename='main.js') }}" defer></script>
    ```
 
-4. The library renders `mysql_fido_gateway/login.html` and supplies its login script. Your application retains its own main-page template, `main.js`, configuration, and business routes. The current [starter](examples/login_app/app.py) has no local `lib/` helper or duplicate login assets.
+4. The library renders login and registration templates and supplies their shared scripts. Override the template paths to use the editable pages from the current starter. Your application retains its own main-page template, `main.js`, configuration, and business routes. The current [starter](examples/login_app/app.py) has no local Python `lib/` helper; its editable Jinja forms extend the library frontend.
 5. Existing `auth.query(sql)` calls still work. Add bound parameters and `many=True` for SELECT convenience, or use a `with auth.getConnection()` block for cursor operations and transactions.
 6. Keep the same RP ID, browser origin, MySQL account, and key registration. Restart and sign in again after the library update; in-memory login state is not migrated between processes. Installing a wheel does not modify MySQL accounts or registrations.
 
@@ -152,7 +196,7 @@ For error handling and the distinction between the native connection and the req
 
 ## Packaging and runtime
 
-Build with `python -m pip wheel . --no-deps --wheel-dir dist`. Import `mysql_fido_gateway.flask_login` directly in application projects; copying the tutorial's `lib/` is no longer needed. The current starter omits the old `lib/` helper and duplicate login assets. When migrating an older copied application, replace `from lib.flask_util import create_gateway_app` with `from mysql_fido_gateway.flask_login import create_gateway_app` and load shared browser assets through `gateway_auth.static`.
+Build with `python scripts/build_release.py`. Import `mysql_fido_gateway.flask_login` directly in application projects; copying the tutorial's `lib/` is no longer needed. The current starter replaces the old Python helper with template inheritance and shared JavaScript. When migrating an older copied application, replace `from lib.flask_util import create_gateway_app` with `from mysql_fido_gateway.flask_login import create_gateway_app` and load shared browser assets through `gateway_auth.static`.
 
 The utility retains one process and in-memory sessions: one authenticated worker/connection per login, at most 32 sessions, an absolute default lifetime of 300 seconds, and a 20-second wait for each queued operation. Logout, expiry, failed health checks, restart, and uncertain cleanup require a new login. It never caches passwords or reconnects automatically. A timed-out write can have an uncertain outcome; inspect application state before retrying. Live connections cannot be serialized into cookies or distributed session stores.
 

@@ -1,0 +1,15 @@
+{% extends "mysql_fido_gateway/register.html" %}
+{% block title %}Register a passkey · My application{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='auth/webauthn.js') }}" defer></script>
+<script src="{{ url_for('static', filename='auth/register.js') }}" defer></script>
+{% endblock %}
+{% block form %}
+<form id="register" action="{{ url_for('start_register') }}" method="post">
+<label for="username">MySQL username <span aria-hidden="true">*</span></label>
+<input id="username" name="username" autocomplete="username" required maxlength="32" placeholder="Your existing username">
+<label for="password">MySQL password <span aria-hidden="true">*</span></label>
+<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Your account password">
+<button type="submit">Register security-key passkey</button>
+</form>
+{% endblock %}

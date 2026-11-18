@@ -12,12 +12,13 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
+from mysql_fido_gateway.config import mysql_config, loopback_allowed
 
 
 PROOF_SQL = "SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version"
 
 
-def create_app(gateway=None):
+def create_app(gateway=None, *, db_config=None, allow_loopback_plaintext=None):
     app = Flask(__name__, root_path=str(Path(__file__).resolve().parent))
     origin = os.environ.get('BROWSER_ORIGIN', 'https://localhost').rstrip('/')
     rp_id = os.environ.get('RP_ID', 'localhost')
@@ -35,20 +36,11 @@ def create_app(gateway=None):
         MAX_CONTENT_LENGTH=131072,
         TRUSTED_HOSTS=[rp_id, '127.0.0.1'] if rp_id == 'localhost' else [rp_id],
     )
-    db_config = {
-        'host': os.environ.get('DB_HOST', '127.0.0.1'),
-        'port': int(os.environ.get('DB_PORT', '5316')),
-        'connection_timeout': 10,
-        'read_timeout': 180,
-        'write_timeout': 15,
-    }
-    if os.environ.get('DB_SSL_CA'):
-        db_config.update(ssl_ca=os.environ['DB_SSL_CA'],
-                         ssl_verify_cert=True, ssl_verify_identity=True)
     if gateway is None:
+        db_config = mysql_config(db_config, read_timeout=180, write_timeout=15)
         gateway = Gateway(
             db_config, origin, rp_id,
-            allow_loopback_plaintext=os.environ.get('ALLOW_LOOPBACK_DB_PLAINTEXT') == '1',
+            allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext),
         )
     broker = Broker()
     app.extensions.update(browser_gateway=gateway, ceremony_broker=broker)

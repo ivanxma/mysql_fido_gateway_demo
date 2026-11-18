@@ -2,7 +2,7 @@
 
 ## Configuration layers
 
-The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) imports `create_demo_app` from `mysql_fido_gateway.flask_util` in the installed 0.2.0 wheel, which translates environment values into `Gateway` arguments. Its direct entry point and launcher use isolated Python imports to avoid source-checkout shadowing; `python app.py --check-library` reports the selected version and package location without starting the server. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management.
+The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) imports `create_demo_app` from `mysql_fido_gateway.flask_util` in the installed 0.3.0 wheel, which translates environment values into `Gateway` arguments. Its direct entry point and launcher use isolated Python imports to avoid source-checkout shadowing; `python app.py --check-library` reports the selected version and package location without starting the server. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management.
 
 The three separate tutorials use backend 5004 for [create user](create-user-tutorial.md), 5002 for [registration](registration-tutorial.md), and 5003 for [login/main](login-main-tutorial.md). Each includes its own HTTPS proxy target. Create-user and registration use `create_action_app` from the shared Flask helper, with distinct cookie names `gateway_create` and `gateway_register`.
 
@@ -21,6 +21,27 @@ The effective launcher order is:
 
 `config.example.env` is a reference file, not an automatically loaded configuration. Direct `python app.py` does not read `.env`. The launcher treats `.env` as executable shell code, so only source a file you control.
 
+## Explicit Python MySQL configuration
+
+All Flask factories accept `db_config=` and `allow_loopback_plaintext=`. Pass the actual target and TLS settings; no shared database username/password belongs in this mapping:
+
+```python
+app, auth = create_gateway_app(
+    Path(__file__).parent,
+    db_config={
+        'host': 'db.example.com',
+        'port': 3307,
+        'ssl_ca': '/path/to/mysql-ca.pem',
+        'ssl_verify_cert': True,
+        'ssl_verify_identity': True,
+    },
+)
+```
+
+`db.example.com:3307` is an explicit example, not a default. For deliberate local development, pass your loopback host/port and `allow_loopback_plaintext=True`. If `db_config` is omitted, `DB_HOST` and `DB_PORT` are required in the environment; absence stops startup. Username and password are supplied by each user in the login/registration form, or explicitly to `Gateway.connect(username, password, ask)` / `register(...)` in a custom integration.
+
+The `newapp` generator writes its selected host/port directly into `MYSQL_HOST` and `MYSQL_PORT` in the generated `app.py`, and into `.env`. The app visibly passes those settings to `db_config`; deployment environment values can override the code assignments. `runtime.check_library()` and `runtime.run_demo_app()` hold wheel/startup checks so root `app.py` stays minimal.
+
 ## Application environment variables
 
 These are all environment variables currently read by the application or launcher as application settings. `BROWSER_ORIGIN`, RP, and database transport settings should be fixed before app construction; restart after changing configuration.
@@ -29,8 +50,8 @@ These are all environment variables currently read by the application or launche
 | --- | --- | --- | --- |
 | `BROWSER_ORIGIN` | `https://localhost`; trailing `/` removed | Local mode forces `https://localhost`; remote mode defaults to `https://$RP_ID` | Exact browser origin used for signed data and POST Origin checks |
 | `RP_ID` | `localhost` | Defaults to `localhost`; local mode forces it | WebAuthn relying-party domain; must match the MySQL server challenge |
-| `DB_HOST` | `127.0.0.1` | Defaults to `127.0.0.1` | Database connection target; remote TLS needs a certificate-matching hostname |
-| `DB_PORT` | `5316`, converted to integer | Defaults to `5316` | MySQL classic-protocol TCP port |
+| `DB_HOST` | Required; no default | Must be configured | Database connection target; remote TLS needs a certificate-matching hostname |
+| `DB_PORT` | Required integer, 1–65535; no default | Must be configured | MySQL classic-protocol TCP port |
 | `DB_SSL_CA` | Unset | Inherited or loaded from `.env` | CA file for database TLS; a nonempty value enables certificate and hostname verification |
 | `ALLOW_LOOPBACK_DB_PLAINTEXT` | Only exact string `1` enables the exception | If unset, no CA is set, and DB host is `127.0.0.1`, `::1`, or `localhost`, sets `1`; preserves an explicitly supplied value | Development exception to mandatory database certificate validation for these loopback host strings only |
 | `DB_ACCOUNT_HOST` | `localhost` | Defaults to `localhost` | Host part used when creating/dropping a demo account; this is not a connection target |
@@ -99,7 +120,7 @@ The launcher uses the repository's `.venv/bin/python`; it does not create the en
 | Login UI assets | Supplied by the wheel at `/_gateway/static/`; application business assets retain their own static endpoint |
 | Backend listener | Set by the application; the login sample uses `127.0.0.1:5003` |
 
-`ADMIN_TOKEN` and `DB_ACCOUNT_HOST` do not enable provisioning in the login utility. Provision and register the account separately. Process restart loses its live connections even with an unchanged signing secret. Direct sample applications read exported environment values; their app factories do not source `.env`. See the [SQL/session API](api-reference.md#flask-login-and-sql-api).
+`ADMIN_TOKEN` and `DB_ACCOUNT_HOST` do not enable provisioning in the login utility. Provision the account separately; its key can be enrolled through the login page’s registration link. Process restart loses its live connections even with an unchanged signing secret. Direct sample applications read exported environment values; their app factories do not source `.env`. See the [SQL/session API](api-reference.md#flask-login-and-sql-api).
 
 ## Origin and hostnames
 
@@ -125,12 +146,12 @@ General browser support for HTTP localhost does not remove this code's HTTPS che
 
 ## Python database configuration parameters
 
-`Gateway(db_config, origin, rp_id, ...)` copies `db_config` and forwards its connection options to Connector/Python on each operation. The following table lists the relevant options used by this project; it is not an exhaustive Connector/Python option list.
+`Gateway(db_config, origin, rp_id, ...)` requires an explicit host and port in `db_config`, copies it, and forwards its connection options to Connector/Python on each operation. The following table lists the relevant options used by this project; it is not an exhaustive Connector/Python option list.
 
 | Key | Type | Reference app value | Meaning |
 | --- | --- | --- | --- |
-| `host` | `str` | From `DB_HOST` | Database target; Gateway treats omitted host as loopback for its policy check |
-| `port` | `int` | From `DB_PORT` | Target port; if omitted by a package caller, Connector/Python uses its own default, normally 3306 |
+| `host` | `str` | From `DB_HOST` | Database target; Required; no default hostname |
+| `port` | `int` | From `DB_PORT` | Target port; required by this library; a missing port is rejected |
 | `ssl_ca` | `str` | From `DB_SSL_CA`, when nonempty | CA certificate file path |
 | `ssl_verify_cert` | `bool` | `True` when a CA is configured | Require database certificate validation |
 | `ssl_verify_identity` | `bool` | `True` when a CA is configured | Require database hostname verification |

@@ -169,9 +169,12 @@ class Gateway:
             raise BridgeError(f'Private connector API: install mysql-connector-python=={TESTED_CONNECTOR}')
         if origin != 'https://' + rp_id:
             raise BridgeError('This protocol profile requires origin=https://RP_ID on port 443')
-        self.db_config = dict(db_config)
+        from .config import mysql_config
+        if db_config is None:
+            raise BridgeError('Gateway requires an explicit MySQL transport mapping with host and port')
+        self.db_config = mysql_config(db_config)
         self.origin, self.rp_id = origin, rp_id
-        host = self.db_config.get('host', '127.0.0.1')
+        host = self.db_config['host']
         if not (allow_loopback_plaintext and host in {'127.0.0.1', '::1', 'localhost'}):
             if self.db_config.get('ssl_disabled') or not (self.db_config.get('ssl_ca') and self.db_config.get('ssl_verify_cert')
                     and self.db_config.get('ssl_verify_identity')):

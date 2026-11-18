@@ -59,8 +59,8 @@ This application is independent of the gateway repository. Your project imports 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip wheel "${GATEWAY_SOURCE}" --no-deps --wheel-dir "${GATEWAY_SOURCE}/dist"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.2.0-py3-none-any.whl[flask]"
+python "${GATEWAY_SOURCE}/scripts/build_release.py"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
 python -c "from mysql_fido_gateway import Gateway, BridgeError; print('Gateway import OK')"
 ```
 
@@ -147,7 +147,7 @@ export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32
 
 Only source an environment file you control. The starter reads exported variables and requires `FLASK_SECRET_KEY`; it does not automatically load `.env`. The generated secret remains in this terminal environment. Store a stable secret through your normal secret-management process when browser sessions must survive restarts. `.env` is ignored by the copied `.gitignore`.
 
-The example defaults to local MySQL at port 5316 and explicitly allows the loopback database transport exception. For a remote DB, configure `DB_SSL_CA`, certificate-matching `DB_HOST`, and the appropriate port, then unset the loopback exception. Browser HTTPS and database TLS are separate settings; see the [configuration reference](configuration.md#python-database-configuration-parameters).
+Explicitly set the actual MySQL host, port, and TLS settings in `.env`; the library does not assume them. A loopback database requires a deliberately selected development TLS exception or verified TLS. For a remote DB, configure `DB_SSL_CA`, certificate-matching `DB_HOST`, and the appropriate port, then unset the loopback exception. Browser HTTPS and database TLS are separate settings; see the [configuration reference](configuration.md#python-database-configuration-parameters).
 
 **Checkpoint:** the effective app values are `RP_ID=localhost` and `BROWSER_ORIGIN=https://localhost`, matching the server. No DB user password or PIN belongs in `.env`.
 

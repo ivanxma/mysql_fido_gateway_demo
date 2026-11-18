@@ -232,11 +232,18 @@ class LoginAppTests(unittest.TestCase):
         self.assertTrue(other_done.is_set())
 
     def test_packaged_login_assets_work_without_starter_assets(self):
-        page = self.get('/login')
-        self.assertIn(b'/_gateway/static/login.js', page.data)
-        for name in ('common.js', 'login.js', 'style.css'):
-            with self.get('/_gateway/static/' + name) as asset:
-                self.assertEqual(asset.status_code, 200)
+        from mysql_fido_gateway.flask_login import create_gateway_app
+        with patch.dict(os.environ, {'FLASK_SECRET_KEY': 'packaged-frontend-test'}):
+            app, auth = create_gateway_app(STARTER, gateway=self.gateway)
+        try:
+            client = app.test_client()
+            page = client.get('/login', base_url='https://localhost')
+            self.assertIn(b'/_gateway/static/login.js', page.data)
+            for name in ('common.js', 'webauthn.js', 'login.js', 'register.js', 'style.css'):
+                with client.get('/_gateway/static/' + name, base_url='https://localhost') as asset:
+                    self.assertEqual(asset.status_code, 200)
+        finally:
+            auth.close()
 
     def test_failed_commit_revokes_session_instead_of_reusing_uncertain_state(self):
         import mysql.connector
