@@ -60,7 +60,7 @@ This application is independent of the gateway repository. Your project imports 
 python3 -m venv .venv
 source .venv/bin/activate
 python "${GATEWAY_SOURCE}/scripts/build_release.py"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 python -c "from mysql_fido_gateway import Gateway, BridgeError; print('Gateway import OK')"
 ```
 
@@ -116,7 +116,7 @@ SELECT @@GLOBAL.authentication_webauthn_rp_id,
        @@GLOBAL.authentication_policy;
 ```
 
-The plugin must be ACTIVE, and authentication policy must permit the password/WebAuthn combination. This tutorial does not install the Enterprise plugin or override a shared server's authentication policy.
+The plugin must be ACTIVE, and authentication policy must permit the password/WebAuthn combination. This tutorial does not install the server plugin or override a shared server's authentication policy.
 
 After choosing `localhost` as this test server's RP ID:
 

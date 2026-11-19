@@ -1,6 +1,11 @@
 """Explicit MySQL transport configuration for the optional Flask factories."""
 import os
-from .codec import BridgeError
+from .codec import BridgeError, check_registration_mode
+
+
+def registration_mode(value=None):
+    """Resolve the deployment's enrollment policy, never a browser-supplied flag."""
+    return check_registration_mode(os.environ.get('REGISTRATION_MODE', 'browser') if value is None else value)
 
 
 def mysql_config(config=None, *, read_timeout=15, write_timeout=10):

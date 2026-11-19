@@ -6,9 +6,10 @@ import re
 import shlex
 import shutil
 
-VERSION = '0.3.0'
+from .runtime import LIBRARY_VERSION
+
 WHEEL_URL = ('https://raw.githubusercontent.com/ivanxma/mysql_fido_gateway_demo/'
-             'main/downloads/0.3.0/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl')
+             f'main/downloads/{LIBRARY_VERSION}/mysql_browser_fido_gateway-{LIBRARY_VERSION}-py3-none-any.whl')
 
 
 def required(value, label):
@@ -73,7 +74,7 @@ def newapp(args):
             template.write_text(text)
         env = ['# Explicit MySQL transport. User credentials are entered in the browser.',
                f'DB_HOST={shlex.quote(host)}', f'DB_PORT={port}',
-               'RP_ID=localhost', 'BROWSER_ORIGIN=https://localhost',
+               'RP_ID=localhost', 'BROWSER_ORIGIN=https://localhost', 'REGISTRATION_MODE=browser',
                f'ALLOW_LOOPBACK_DB_PLAINTEXT={1 if plaintext else 0}',
                f'DB_SSL_CA={shlex.quote(ca or "")}', 'SESSION_TTL_SECONDS=300', '']
         config = destination / '.env'

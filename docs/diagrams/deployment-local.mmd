@@ -1,0 +1,17 @@
+flowchart LR
+    subgraph Local["Developer computer"]
+        Key["FIDO2 key<br/>PIN and private key"]
+        Browser["Browser<br/>https://localhost"]
+        App["Caddy :443<br/>↓ loopback HTTP<br/>Flask + gateway"]
+        DB[("Test MySQL<br/>Explicit host + port")]
+        Key <-->|"WebAuthn"| Browser
+        Browser <-->|"HTTPS"| App
+        App <-->|"Database connection"| DB
+    end
+    classDef user fill:#eef6f3,stroke:#47736b,color:#25342f;
+    classDef service fill:#fcfaf7,stroke:#c74634,color:#312d2a;
+    classDef database fill:#f0ece6,stroke:#625d58,color:#312d2a;
+    class Key,Browser user;
+    class App service;
+    class DB database;
+    style Local fill:#ffffff,stroke:#b9b0a6,color:#312d2a

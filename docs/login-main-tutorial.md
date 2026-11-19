@@ -22,7 +22,7 @@ Complete [Tutorial 1: Create a MySQL user](create-user-tutorial.md) first. You c
 
 You need:
 
-- Python 3.12+, the pinned Connector/Python version installed by this repository, and MySQL Enterprise with the supported WebAuthn plugin and password + WebAuthn factor 2 account.
+- Python 3.12+, the pinned Connector/Python version installed by this repository, and MySQL with the supported WebAuthn plugin and password + WebAuthn factor 2 account.
 - A supported FIDO2 security key, such as a YubiKey. An already enrolled key can sign in; an unregistered account can enroll through `/register`. See the [full requirements](user-manual.md#requirements).
 - MySQL's RP ID and application `RP_ID` both set to `localhost`, with `connect_timeout` at least 180 seconds (preserve higher values).
 - A WebAuthn browser opening trusted `https://localhost` on port 443. The current gateway validates that exact HTTPS origin. Other hostnames and ports are different origins. A different RP ID requires corresponding server configuration and registration.
@@ -40,13 +40,13 @@ cd ../gateway_login_app
 python3 -m venv .venv
 source .venv/bin/activate
 python "${GATEWAY_SOURCE}/scripts/build_release.py"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 python -c "from mysql_fido_gateway.flask_login import create_gateway_app; print('Flask FIDO library import OK')"
 cp "${GATEWAY_SOURCE}/docs/examples/login_app/app.py" "${GATEWAY_SOURCE}/docs/examples/login_app/config.example.env" "${GATEWAY_SOURCE}/docs/examples/login_app/Caddyfile.local" "${GATEWAY_SOURCE}/docs/examples/login_app/.gitignore" .
 cp -R "${GATEWAY_SOURCE}/docs/examples/login_app/templates" "${GATEWAY_SOURCE}/docs/examples/login_app/static" .
 ```
 
-Choose a different empty project directory if that name already exists. The first pip command builds the library wheel; skip it if you already have the reviewed 0.3.0 wheel. The second installs that wheel with its Flask dependency. This is a regular installation: changes in the library checkout take effect only after rebuilding and reinstalling. The sample application's files remain editable in your project.
+Choose a different empty project directory if that name already exists. The first pip command builds the library wheel; skip it if you already have the reviewed 0.3.1 wheel. The second installs that wheel with its Flask dependency. This is a regular installation: changes in the library checkout take effect only after rebuilding and reinstalling. The sample application's files remain editable in your project.
 
 ```text
 gateway_login_app/

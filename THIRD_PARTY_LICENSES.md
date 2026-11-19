@@ -1,7 +1,7 @@
 # Third-party licenses and notices
 
 Audit date: 2026-11-18. This document records the dependencies inspected for
-the 0.3.0 prototype/tutorial release. The original project code, templates,
+the 0.3.1 prototype/tutorial release. The original project code, templates,
 JavaScript, and documentation are MIT licensed by ivanxma; this does not
 relicense dependency software. See [LICENSE](LICENSE) and the personal-project
 [disclaimer](DISCLAIMER.md).

@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
-LIBRARY_VERSION = '0.3.0'
+LIBRARY_VERSION = '0.3.1'
 
 
 def check_library(root, *, required_version=LIBRARY_VERSION):

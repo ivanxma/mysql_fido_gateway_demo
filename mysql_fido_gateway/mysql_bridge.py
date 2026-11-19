@@ -4,6 +4,8 @@ Private Connector/Python API: pinned to 26.10.0. No global monkey patches.
 MySQL, never this adapter, decides whether the signature authenticates the user.
 """
 from dataclasses import dataclass
+from collections import OrderedDict
+import threading
 from typing import Callable
 
 import mysql.connector
@@ -13,7 +15,7 @@ from mysql.connector.constants import ClientFlag, ServerCmd
 from mysql.connector.errors import get_exception
 from mysql.connector.plugins import MySQLAuthPlugin
 
-from .codec import BridgeError, Challenge, Reader, assertion_packet, b64u, registration_packet
+from .codec import BridgeError, Challenge, Reader, assertion_packet, b64u, check_registration_mode, registration_packet, unb64u
 
 TESTED_CONNECTOR = '26.10.0'
 
@@ -27,6 +29,8 @@ class Exchange:
     pending: bool = False
     asserted: bool = False
     factor: int = 0
+    credential_hint: bytes = b''
+    asserted_credential_id: bytes = b''
 
 
 class BrowserPlugin(MySQLAuthPlugin):
@@ -75,10 +79,22 @@ class BrowserPlugin(MySQLAuthPlugin):
         # MySQL may omit the ID for resident credentials. Browser discovery is
         # then necessary, and browser/key policy may require PIN despite UV
         # being discouraged. Never invent a credential ID or alter signed data.
+        if not credential_id:
+            credential_id = exchange.credential_hint
         if credential_id:
-            options['allowCredentials'] = [{'type': 'public-key', 'id': b64u(credential_id)}]
+            # This profile enrolls external security keys, not platform or
+            # phone/hybrid passkeys. Transports and hints guide the browser's
+            # chooser; only MySQL's signature verification authorizes login.
+            options['allowCredentials'] = [{'type': 'public-key', 'id': b64u(credential_id),
+                                             'transports': ['usb', 'nfc', 'ble']}]
         credential = exchange.ask('get', options)
         payload = assertion_packet(credential, challenge, exchange.origin)
+        returned_id = unb64u(credential.get('rawId', ''))
+        if credential_id and returned_id and returned_id != credential_id:
+            raise BridgeError('Browser returned a different credential than requested')
+        # Routing metadata only; Gateway remembers this after MySQL accepts.
+        if len(returned_id) <= 4096:
+            exchange.asserted_credential_id = returned_id
         sock.send(payload)
         exchange.asserted = True
         return bytes(sock.recv())
@@ -164,7 +180,12 @@ class BrowserConnection(MySQLConnection):
 
 
 class Gateway:
-    def __init__(self, db_config, origin, rp_id, *, allow_loopback_plaintext=False):
+    def __init__(self, db_config, origin, rp_id, *, allow_loopback_plaintext=False,
+                 credential_hint_capacity=128, registration_mode='browser'):
+        self.registration_mode = check_registration_mode(registration_mode)
+        if (type(credential_hint_capacity) is not int
+                or not 0 <= credential_hint_capacity <= 1024):
+            raise BridgeError('credential_hint_capacity must be an integer from 0 to 1024')
         if mysql.connector.__version__ != TESTED_CONNECTOR:
             raise BridgeError(f'Private connector API: install mysql-connector-python=={TESTED_CONNECTOR}')
         if origin != 'https://' + rp_id:
@@ -174,6 +195,9 @@ class Gateway:
             raise BridgeError('Gateway requires an explicit MySQL transport mapping with host and port')
         self.db_config = mysql_config(db_config)
         self.origin, self.rp_id = origin, rp_id
+        self._credential_hint_capacity = credential_hint_capacity
+        self._credential_ids = OrderedDict()
+        self._credential_ids_lock = threading.Lock()
         host = self.db_config['host']
         if not (allow_loopback_plaintext and host in {'127.0.0.1', '::1', 'localhost'}):
             if self.db_config.get('ssl_disabled') or not (self.db_config.get('ssl_ca') and self.db_config.get('ssl_verify_cert')
@@ -182,30 +206,58 @@ class Gateway:
                     raise BridgeError('Local MySQL requires verified TLS or the explicit development setting '
                                       'ALLOW_LOOPBACK_DB_PLAINTEXT=1')
                 raise BridgeError('Remote MySQL requires DB_SSL_CA and certificate/hostname verification')
-        if any(key in self.db_config for key in ('user', 'password', 'password1', 'pool_name', 'pool_size', 'database')):
-            raise BridgeError('Gateway configuration must not contain shared credentials, pools, or an initial database')
+
+    def _credential_hint(self, username):
+        with self._credential_ids_lock:
+            value = self._credential_ids.get(username, b'')
+            if value:
+                self._credential_ids.move_to_end(username)
+            return value
+
+    def _remember_credential(self, username, credential_id):
+        if not self._credential_hint_capacity or not 0 < len(credential_id) <= 4096:
+            return
+        with self._credential_ids_lock:
+            self._credential_ids[username] = credential_id
+            self._credential_ids.move_to_end(username)
+            while len(self._credential_ids) > self._credential_hint_capacity:
+                self._credential_ids.popitem(last=False)
+
+    def clear_credential_hint(self, username):
+        """Forget this account's public routing ID; this does not change MySQL."""
+        with self._credential_ids_lock:
+            self._credential_ids.pop(username, None)
 
     def connect(self, username, password, ask):
         """Return this user's MySQL-accepted connection; caller owns and closes it."""
-        exchange = Exchange(self.origin, self.rp_id, ask)
-        return BrowserConnection(exchange, user=username, password1=password, **self.db_config)
+        exchange = Exchange(self.origin, self.rp_id, ask,
+                            credential_hint=self._credential_hint(username))
+        try:
+            connection = BrowserConnection(exchange, user=username, password1=password, **self.db_config)
+        except mysql.connector.Error as error:
+            if exchange.asserted and error.errno == 1045:
+                self.clear_credential_hint(username)
+            raise
+        self._remember_credential(username, exchange.asserted_credential_id)
+        return connection
 
-    def register(self, username, password, ask, *, on_command=None):
-        """Run INITIATE and FINISH on the same restricted connection; no key stored here."""
+    def register(self, username, password, ask, *, on_command=None, registration_mode=None):
+        """Register with an optional per-call mode; the instance default stays unchanged."""
+        mode = check_registration_mode(self.registration_mode if registration_mode is None else registration_mode)
         exchange = Exchange(self.origin, self.rp_id, ask, registering=True)
         connection = BrowserConnection(exchange, user=username, password1=password, **self.db_config)
         try:
             if on_command:
                 on_command('ALTER USER USER() 2 FACTOR INITIATE REGISTRATION')
             encoded, plugin = connection.initiate_registration()
-            if isinstance(plugin, bytes):
-                plugin = plugin.decode('ascii')
-            if plugin != 'authentication_webauthn_client':
+            if plugin != b'authentication_webauthn_client':
                 raise BridgeError('INITIATE returned a different client plugin')
             challenge = Challenge.parse(encoded, registration=True)
-            options = challenge.options(self.rp_id, registration=True)
+            options = challenge.options(self.rp_id, registration=True,
+                                        registration_mode=mode)
             credential = ask('create', options)
-            response = registration_packet(credential, challenge, self.origin)
+            response = registration_packet(credential, challenge, self.origin,
+                                           registration_mode=mode)
             # base64 alphabet contains no SQL quote/backslash characters.
             if on_command:
                 on_command("ALTER USER USER() 2 FACTOR FINISH REGISTRATION SET CHALLENGE_RESPONSE AS '<redacted>'")
@@ -215,6 +267,8 @@ class Gateway:
             )
             if 'affected_rows' not in result:
                 raise BridgeError('MySQL did not return an OK result for FINISH REGISTRATION')
-            return {'registered': True, 'verified_by': 'MySQL FINISH REGISTRATION OK'}
+            self._remember_credential(username, unb64u(credential['rawId']))
+            return {'registered': True, 'verified_by': 'MySQL FINISH REGISTRATION OK',
+                    'registration_mode': mode}
         finally:
             connection.close()

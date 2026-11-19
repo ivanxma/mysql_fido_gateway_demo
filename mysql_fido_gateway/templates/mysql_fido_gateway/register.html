@@ -10,6 +10,7 @@
 {% block content %}
 <span class="auth-eyebrow">SET UP YOUR SECURITY KEY</span><h2 id="form-title">Register a passkey</h2>
 <p class="auth-description">Connect your security key, then enter your existing account details.</p>
+{% if registration_mode == 'shared' %}<p class="auth-description">This application enrolls a key for browser and MySQL client access. Use the compatible Firefox setup provided by your administrator.</p>{% endif %}
 <div class="activity" role="status" aria-live="polite" id="status">Your browser will guide you through PIN verification and touching your key.</div>
 {% block form %}<form id="register" action="{{ url_for('start_register') }}" method="post">
 <label for="username">MySQL username <span aria-hidden="true">*</span></label>

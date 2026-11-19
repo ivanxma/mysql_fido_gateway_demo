@@ -6,7 +6,7 @@ Build a separate application containing **only a YubiKey registration form**. Us
 
 Use the same MySQL server, RP ID `localhost`, browser origin `https://localhost`, username, and **new user password** from Tutorial 1. The account must have password factor 1 and an unregistered WebAuthn factor 2.
 
-You need a supported FIDO2 YubiKey on the browser computer, a WebAuthn browser, and trusted HTTPS. Registration requires discoverable credentials, user verification/PIN, and packed ES256 attestation with an X.509 certificate. See the [requirements](user-manual.md#requirements) and [registration sequence](user-manual.md#registration-sequence).
+You need a supported FIDO2 YubiKey on the browser computer, a WebAuthn browser, and trusted HTTPS. Registration uses required user verification/PIN and packed ES256 attestation with an X.509 certificate. The default `browser` mode discourages discoverable credentials to avoid browser-added signed extensions unsupported by the MySQL verification profile. For browser-created credentials intended for stock native-client discovery, configure `REGISTRATION_MODE=shared` and follow the [shared enrollment setup and validation limits](user-manual.md#shared-browser-and-native-client-enrollment). MySQL retains the credential ID in both modes. See the [requirements](user-manual.md#requirements) and [registration sequence](user-manual.md#registration-sequence).
 
 ## Step 2 Create the registration application
 
@@ -19,7 +19,7 @@ cd ../tutorial_register_key
 python3 -m venv .venv
 source .venv/bin/activate
 python "${GATEWAY_SOURCE}/scripts/build_release.py"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 cp -R "${GATEWAY_SOURCE}/docs/examples/register_app/." .
 ```
 

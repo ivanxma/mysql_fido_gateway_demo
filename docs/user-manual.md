@@ -16,7 +16,7 @@ The browser and YubiKey are on the user's computer. The gateway service includes
 
 The package is an experimental interoperability prototype. A passing simulator test does not establish compatibility with a particular MySQL server, browser, or hardware key. See [limitations](#limitations) before selecting a deployment profile.
 
-## Using library 0.3.0 in an application
+## Using library 0.3.1 in an application
 
 | Application | Library entry point | Authenticated connection |
 | --- | --- | --- |
@@ -38,10 +38,10 @@ See the [wheel installation and migration guide](flask-wheel.md), [login/main tu
 | CBOR library | `cbor2==5.9.0` |
 | Flask utilities | `Flask==3.1.3`, supplied by the wheel's `[flask]` extra |
 | Test dependencies | `cryptography>=44` in addition to the application dependencies |
-| MySQL | A server with the Enterprise `authentication_webauthn` plugin available and ACTIVE, and a policy permitting the password/WebAuthn chain |
+| MySQL | A server with `authentication_webauthn` ACTIVE and a policy permitting the password/WebAuthn chain; Community availability starts with 26.10 per its release notes |
 | Test account | Password factor 1 and WebAuthn factor 2; the demonstrated password plugin is `caching_sha2_password` |
 | Browser | WebAuthn support, JavaScript, cookies, and a trusted secure context matching the configured origin |
-| Hardware | A compatible external FIDO2 key supporting discoverable credentials and local user verification; a physical YubiKey is the intended device |
+| Hardware | A compatible external FIDO2 key supporting credential-ID-based use and local user verification; a physical YubiKey was tested with MySQL 26.10.0-commercial |
 | Attestation | Packed ES256 attestation containing an X.509 certificate (`x5c`); the browser must actually return this format |
 | Browser endpoint | Current implementation: `BROWSER_ORIGIN=https://RP_ID`, using HTTPS port 443 |
 | Database transport | Verified TLS for a remote database, or the explicit development exception for a loopback database |
@@ -49,11 +49,21 @@ See the [wheel installation and migration guide](flask-wheel.md), [login/main tu
 
 The Python gateway machine needs neither an attached YubiKey nor the `mysql` command-line executable. A DBA may use the CLI separately to administer the database. Native MySQL client availability is not a gateway runtime requirement.
 
+Remote end users need only HTTPS access to the gateway and their local security
+key. The application server, not the user's computer, connects to private MySQL.
+Running `newapp`, installing wheels and setting MySQL host/port are deployment
+operator tasks. Native CLI enrollment must not be required of a browser-only
+remote user. The 0.3.1 ID-based enrollment workaround does not establish that the
+same browser-created credential works through the stock native FIDO2 discovery
+path. The separate `shared` mode passed browser enrollment and both login paths
+with the compatible Firefox setup described below, with both product plugins
+unchanged. Native enrollment is not part of that remote registration workflow.
+
 ### Current HTTP and HTTPS behavior
 
 General WebAuthn permits an HTTP-localhost exception to its secure-context requirement. This repository intentionally implements a narrower origin profile: both `create_app()` and `Gateway()` require `https://` followed by the RP ID, with no custom port. Browser-signed client data must match that exact origin.
 
-Consequently, `http://localhost:5001` is not a supported registration/login origin in the current app. Flask listens internally on port 5001, and the local launcher configures HTTPS in front of it. The HTTP-only diagrams in the internal presentation describe a simplified design option; they did not change the application or launcher. Remote browser WebAuthn requires HTTPS. See [configuration](configuration.md#origin-and-hostnames).
+Consequently, `http://localhost:5001` is not a supported registration/login origin. The reference demo listens internally on port 5001; the generated starter uses port 5003. Both local launchers configure HTTPS in front of Flask. See [deployment models](deployment.md) and [configuration](configuration.md#origin-and-hostnames).
 
 ## How it works
 
@@ -80,6 +90,84 @@ The worker uses `ask('create', options)` to pause database work while the owner-
 
 `SET NAMES`, autocommit initialization, pings, and business SQL must not be inserted into the pending-registration connection. The dedicated reader accepts INITIATE results with or without a metadata EOF separator.
 
+The default `browser` mode requests `residentKey='discouraged'`, retains required user verification,
+and sends only the full-attestation capability bit (`0x02`) so MySQL keeps the
+credential ID. Requiring discoverable credentials can cause a browser to add
+signed authenticator extensions that MySQL's libfido2 verifier does not expect.
+The adapter rejects signed extensions rather than modifying them. The browser's
+optional `credProps.rk` result is not required for registration.
+
+Depending on the browser/key, this credential may not appear in the YubiKey
+Manager passkey list. That list shows discoverable credentials, not every
+credential usable by ID. Conversely, a key can retain a newly created credential
+even when MySQL rejects FINISH. The application reports success only after MySQL
+accepts registration.
+
+### Shared browser and native-client enrollment
+
+Remote users still register through the HTTPS application; only the gateway
+connects to private MySQL. Neither MySQL product plugin is changed.
+
+For the discoverable-credential compatibility profile, put this setting in the
+application's `.env`, then restart its Python process:
+
+```dotenv
+REGISTRATION_MODE=shared
+```
+
+The Flask factories also accept `registration_mode='shared'` explicitly. For
+framework-independent code, pass that keyword to `Gateway(...)`. The default
+remains `browser`. The retained-login application and single-action registration
+tutorial keep this deployment setting.
+
+In the **three-in-one demo**, the **Register your YubiKey** panel has a
+**Registration mode** switch:
+
+- **Browser only**: choose this for Chrome/Edge enrollment and browser login.
+  Compatibility with the stock MySQL client is not guaranteed.
+- **Browser + MySQL client**: enroll through the compatible Firefox setup
+  described below. Chrome/Edge cannot create this shared credential with the
+  tested MySQL version.
+
+The configured mode supplies the initial selection. Switching affects only the
+next registration attempt; no restart is needed, and other users' requests keep
+their own selection. It does not convert an existing registered credential or
+change login's touch-only request policy. Neither choice requires the remote
+user to connect directly to MySQL.
+
+Shared registration requests a discoverable credential (`residentKey='required'`)
+with PIN/user verification during enrollment. It still sends capability `0x02`
+so MySQL stores the credential ID for subsequent browser login. That packet flag
+controls MySQL storage; it does not remove discoverability from the YubiKey.
+The stock native plugin can discover a compatible resident credential, while
+the browser receives the stored ID and requests touch-only login, including
+after a gateway restart. Browser/key policies can still require verification.
+
+This mode needs a browser backend that creates packed ES256/x5c attestation
+without signed extensions. Chromium adds `credProtect` for discoverable keys;
+even requesting `userVerificationOptional` sends an extension that this MySQL
+verifier rejects. Shared mode reports this error and never silently switches
+to non-discoverable enrollment.
+
+The verified setup is Firefox 160.0.1 on macOS 26.7.2 using its direct security-key
+backend and the tested YubiKey. Desktop Linux uses that backend in the inspected
+source but has not been hardware-tested here. On macOS, use a separate Firefox
+profile, open `about:config`, set
+`security.webauthn.enable_macos_passkeys` to `false`, and restart that profile.
+This directs Firefox to its own security-key backend instead of macOS passkey
+services; keep the normal profile's configuration unchanged. Allow direct
+attestation when Firefox asks. The library does not change browser preferences.
+
+Browser-only registration followed by browser and stock MySQL 26.10 login to
+the same account passed; consult [VALIDATION.md](../VALIDATION.md) for the
+recorded result and its limits. Native login needed no PIN or account selection;
+browser login returned a user-presence-only assertion with the stored ID.
+An explicit `credProps.rk=false` is rejected; omitted optional metadata is not
+treated as proof of discovery. Verify a fresh browser-created key against both
+browser and matching native client when qualifying another browser/OS/key setup.
+Switching the setting does not convert an existing non-discoverable credential.
+Use a fresh test account or a deliberate administrator-managed re-enrollment.
+
 ### Login sequence
 
 ![Numbered login message sequence with accepted and rejected paths](diagrams/login.svg)
@@ -87,6 +175,22 @@ The worker uses `ask('create', options)` to pause database work while the owner-
 [Login diagram source](diagrams/login.mmd)
 
 The adapter removes the MySQL packet header and `AuthMoreData` tag before parsing the credential-ID response. If MySQL supplies an ID, browser options include `allowCredentials`; otherwise the browser uses discoverable-credential lookup. `ask('get', options)` waits for the browser's `navigator.credentials.get()` response. Only after MySQL accepts the assertion may the application run its proof query on the authenticated connection.
+
+When MySQL supplies no ID, the gateway first checks its bounded in-memory hint
+cache for that username on the same Gateway/database/RP. IDs are learned only
+after MySQL accepts registration or authentication. With no hint, discovery may
+require PIN/account selection once. Later logins can target that verified ID.
+The cache is routing metadata, not an authentication database: MySQL checks
+every login. It clears on restart/eviction; a rejected signed assertion clears
+a stale hint. Custom integrations can disable it with
+`credential_hint_capacity=0` or explicitly clear a user's hint. Neither the cache
+nor `userVerification='discouraged'` overrides mandatory browser/key verification.
+
+Both ceremonies include `hints=['security-key']`. A concrete login allow-list
+also supplies the external-key transports `usb`, `nfc`, and `ble`, excluding
+phone/hybrid and platform transports for this profile. These values guide the
+browser chooser; they are not authentication checks and cannot guarantee a
+particular OS dialog. MySQL still verifies the signature.
 
 The demo proof query is:
 
@@ -107,7 +211,7 @@ Run from the repository root:
 ```bash
 python3 -m venv .venv
 .venv/bin/python scripts/build_release.py
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 cp config.example.env .env
 # Edit .env: set your DB_HOST, DB_PORT and CA/TLS choice before starting.
@@ -120,7 +224,7 @@ Review `.env` before running: the launcher sources it as shell code. Do not put 
 
 The current local launcher:
 
-- Uses `.venv/bin/python` without requiring virtual-environment activation, checks for the installed 0.3.0 wheel, and uses isolated imports to avoid loading the adjacent source package.
+- Uses `.venv/bin/python` without requiring virtual-environment activation, checks for the installed 0.3.1 wheel, and uses isolated imports to avoid loading the adjacent source package.
 - Sets `RP_ID=localhost` and `BROWSER_ORIGIN=https://localhost`, overriding remote example values in the shell or `.env`.
 - Requires an explicit MySQL host/port; configure `DB_HOST` and `DB_PORT`. A local TLS exception requires an explicit opt-in; remote databases require verified TLS.
 - Generates an administrator token when it is unset for the local origin, and prints the configured/generated token. An explicitly empty token disables administrator actions.
@@ -203,6 +307,7 @@ Choose the public RP hostname before enrolling keys, for example `fido.example.c
 export RP_ID=fido.example.com
 export BROWSER_ORIGIN=https://fido.example.com
 export DB_HOST=mysql.example.com
+export DB_PORT=3306 # Explicit example; use the actual MySQL port.
 export DB_SSL_CA=/secure/mysql-ca.pem
 unset ALLOW_LOOPBACK_DB_PLAINTEXT
 ./start.sh --remote
@@ -216,7 +321,7 @@ Use a database hostname matching its database TLS certificate. Browser HTTPS and
 
 | Symptom | Check |
 | --- | --- |
-| Missing/wrong library or an editable install | Install the 0.3.0 wheel with `[flask]` in the correct virtual environment, then run `python app.py --check-library` from the reference app directory |
+| Missing/wrong library or an editable install | Install the 0.3.1 wheel with `[flask]` in the correct virtual environment, then run `python app.py --check-library` from the reference app directory |
 | Copied main page has missing scripts/styles | Load common.js and style.css from `gateway_auth.static`; keep the application's main.js under its own static endpoint |
 | Login session ends after an update/restart | Sign in again; a signed cookie cannot restore the lost in-memory authenticated connection |
 | Connection/cursor used outside its context | Keep `auth.getConnection()` and all cursor operations inside the protected request's `with` block; use `auth.run()` for native driver features |
@@ -227,10 +332,13 @@ Use a database hostname matching its database TLS certificate. Browser HTTPS and
 | RP mismatch | Align browser URL, app RP/origin, and MySQL RP ID; do not rewrite signed browser data |
 | Administrator actions disabled | Start with a nonempty `ADMIN_TOKEN`; refresh the page after restarting |
 | HTTP 403 | Check Origin, CSRF token, session cookie, and administrator token where applicable; reload after a restart |
-| MySQL 1045 before SQL | Check the end-user password, matched account host, and authentication configuration; use root credentials only for setup/create |
+| MySQL 1045 before SQL | Check gateway-to-MySQL TLS as well as the end-user password and account host. For a fresh `caching_sha2_password` account, explicitly disabling TLS can cause 1045 with the correct password in this connector. Browser HTTPS does not secure the separate database connection. Use root credentials only for setup/create |
 | Connector error `-1` | Read the reported connector class/detail and stage; it is not a specific server error number or proof of a wrong password |
 | Truncated/malformed credential-ID response | Check adapter/server compatibility and AuthMoreData framing; do not bypass the parser or fabricate an ID |
 | Packed ES256/x5c error | The browser did not return supported attestation; requesting direct attestation does not force its release |
+| MySQL 4061 after FINISH on version 0.3.0 | Upgrade to 0.3.1 for credential-ID-based enrollment. In the observed live failure the signature was valid, but signed authenticator extensions caused libfido2 `FIDO_ERR_INVALID_PARAM`; the server logged a generic signature failure. Other 4061 failures still need server diagnostics |
+| Signed authenticator extensions rejected before FINISH | Confirm the updated library is installed and restarted. Use its credential-ID-based options and a compatible browser/key; never remove extensions from signed authenticator data |
+| Browser offers only phone/QR login | Refresh after upgrading to get security-key hints and the external-key transport list. Use the same enrolled key; do not register the account again just to change the dialog. The browser controls the UI |
 | No browser key dialog | Check trusted HTTPS, WebAuthn support, account registration state, and the event returned in the banner |
 | Ceremony expired / wrong request token | Start a fresh flow, finish within the deadline, and do not reuse a prior response |
 | Gateway busy | Wait for current/recent flows to expire; capacity includes finished flows until expiration cleanup |
@@ -241,7 +349,7 @@ The application logs error number, exception class, action, and stage without du
 ## Limitations
 
 - The browser profile is intentionally narrower than general WebAuthn: exact HTTPS host match on port 443. HTTP localhost and custom browser ports are not implemented.
-- The supported ceremony is password factor 1 followed by WebAuthn factor 2. The demonstrated profile is an external discoverable FIDO2 credential with packed ES256/x5c attestation.
+- The supported ceremony is password factor 1 followed by WebAuthn factor 2. Both registration modes require external FIDO2 packed ES256/x5c attestation and retain the credential ID in MySQL. The default `browser` mode discourages discoverable credentials; `shared` requires them and has the browser restrictions described above. Both reject signed authenticator extensions.
 - Other attestation formats, self-attestation, legacy U2F enrollment, and browser-suppressed certificate attestation are rejected. A compatible non-Yubico authenticator can satisfy this profile; the adapter does not independently enforce manufacturer identity.
 - PIN-free login is a request, not a guarantee. Discovery, browser behavior, and key policy can still require a PIN.
 - Connector/Python private APIs and special wire-format handling make version upgrades a compatibility exercise. Merely changing the version constant is not sufficient validation.
@@ -262,4 +370,4 @@ For the repository tests:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The older [validation record](../VALIDATION.md) is a dated snapshot, not the current test count. Technical definitions and primary specifications are collected in [terms and references](terms-and-references.md).
+The [validation record](../VALIDATION.md) lists the release's automated checks, hardware results, and their limits. Technical definitions and primary specifications are collected in [terms and references](terms-and-references.md).

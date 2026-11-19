@@ -12,7 +12,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
-from mysql_fido_gateway.config import mysql_config, loopback_allowed
+from mysql_fido_gateway.config import mysql_config, loopback_allowed, registration_mode
 
 
 PROOF_SQL = "SELECT 'hello world', CURRENT_USER(), CONNECTION_ID(), @@version"
@@ -41,6 +41,7 @@ def create_app(gateway=None, *, db_config=None, allow_loopback_plaintext=None):
         gateway = Gateway(
             db_config, origin, rp_id,
             allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext),
+            registration_mode=registration_mode(),
         )
     broker = Broker()
     app.extensions.update(browser_gateway=gateway, ceremony_broker=broker)

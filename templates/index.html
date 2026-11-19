@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/style.css"><script src="/static/gateway.js" defer></script></head>
 <body><main><header><span class="eyebrow">Reusable gateway prototype</span><h1>Your YubiKey. MySQL’s decision.</h1>
 <p>Register and authenticate against MySQL from a remote browser. The browser handles PIN and touch prompts on your device.</p>
-<div class="profile"><span>MySQL: {{ db_host }}:{{ db_port }}</span><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Experimental · server compatibility unverified</span></div></header>
+<div class="profile"><span>MySQL: {{ db_host }}:{{ db_port }}</span><span>RP: {{ rp_id }}</span><span>Origin: {{ origin }}</span><span>Prototype · compatibility depends on browser and key</span></div></header>
 {% if admin_enabled %}<p class="profile">Demo administrator token: <code id="admin-token">{{ admin_token }}</code></p>{% endif %}
 <section class="setup-banner" aria-labelledby="setup-title">
 <div class="operation-notifications" aria-label="MySQL notifications" aria-live="polite" role="status">
@@ -41,9 +41,23 @@
 <form data-action="register">
 <label>MySQL username<input name="username" placeholder="Enter a MySQL username" maxlength="32" autocomplete="username" required></label>
 <label>MySQL password<input name="password" type="password" autocomplete="current-password" required></label>
+{% if allow_registration_mode_selection %}
+<fieldset class="registration-modes" aria-describedby="registration-mode-help">
+<legend>Registration mode</legend>
+<label class="registration-mode-option">
+<input type="radio" name="registration_mode" value="browser" {% if registration_mode == 'browser' %}checked{% endif %} required>
+<span><strong>Browser only</strong><small>For Chrome / Edge browser login. MySQL client compatibility is not guaranteed.</small></span>
+</label>
+<label class="registration-mode-option">
+<input type="radio" name="registration_mode" value="shared" {% if registration_mode == 'shared' %}checked{% endif %} required>
+<span><strong>Browser + MySQL client</strong><small>Register with the compatible Firefox setup. Chrome / Edge cannot enroll a shared key with this MySQL version.</small></span>
+</label>
+<small id="registration-mode-help">Applies to this registration only. Switching modes does not change an already registered key.</small>
+</fieldset>
+{% endif %}
 <button>Register in browser</button></form>
 <div class="status" role="status" aria-live="polite"></div>
-<small>Requires a FIDO2 key with discoverable credentials, PIN/user verification, and packed ES256 attestation. Browser prompts stay local; the PIN is never sent to Python.</small></section>
+<small>Requires a compatible FIDO2 key, PIN/user verification, and packed ES256 attestation. MySQL retains the credential ID for login. Browser prompts stay local; the PIN is never sent to Python.</small></section>
 <section><span class="step">03 · Database login</span><h2>Login · Hello world</h2>
 <p>Enter your MySQL password and touch your registered key. Login requests no PIN; your browser or key policy may still require one.</p>
 <form data-action="login">

@@ -39,6 +39,66 @@ class CodecTests(unittest.TestCase):
     def test_rp_mismatch(self):
         with self.assertRaises(BridgeError): self.challenge.options('example.com')
 
+    def test_registration_uses_credential_id_profile_with_required_verification(self):
+        options = self.challenge.options('localhost', registration=True)
+        self.assertEqual(options['authenticatorSelection'], {
+            'authenticatorAttachment': 'cross-platform', 'residentKey': 'discouraged',
+            'requireResidentKey': False, 'userVerification': 'required'})
+        self.assertEqual(options['extensions'], {'credProps': True})
+        self.assertEqual(options['hints'], ['security-key'])
+        self.assertEqual(self.challenge.options('localhost')['hints'], ['security-key'])
+
+    def test_registration_keeps_signed_bytes_without_requiring_credential_properties(self):
+        credential = self.key('create', self.challenge.options('localhost', registration=True))
+        for properties in [None, {'credProps': {'rk': False}}, {'credProps': {'rk': True}}]:
+            with self.subTest(properties=properties):
+                reply = copy.deepcopy(credential)
+                if properties is not None:
+                    reply['clientExtensionResults'] = properties
+                packet = registration_packet(reply, self.challenge, 'https://localhost')
+                reader = Reader(base64.b64decode(packet))
+                self.assertEqual(reader.take(1), b'\x02')
+                import cbor2
+                attestation = cbor2.loads(base64.urlsafe_b64decode(reply['response']['attestationObject'] + '=='))
+                self.assertEqual(cbor2.loads(reader.blob()), attestation['authData'])
+                self.assertEqual(reader.blob(), attestation['attStmt']['sig'])
+                self.assertEqual(reader.blob(), attestation['attStmt']['x5c'][0])
+                self.assertEqual(reader.blob(), base64.urlsafe_b64decode(reply['response']['clientDataJSON'] + '=='))
+
+    def test_shared_enrollment_requires_resident_key_and_preserves_login_policy(self):
+        options = self.challenge.options('localhost', registration=True, registration_mode='shared')
+        self.assertEqual(options['authenticatorSelection'], {
+            'authenticatorAttachment': 'cross-platform', 'residentKey': 'required',
+            'requireResidentKey': True, 'userVerification': 'required'})
+        self.assertEqual(options['extensions'], {'credProps': True})
+        self.assertEqual(self.challenge.options('localhost')['userVerification'], 'discouraged')
+
+    def test_shared_packet_retains_server_id_without_rewriting_signed_data(self):
+        options = self.challenge.options('localhost', registration=True, registration_mode='shared')
+        credential = self.key('create', options)
+        before = copy.deepcopy(credential)
+        for properties in ({}, {'credProps': {'rk': True}}):
+            credential['clientExtensionResults'] = properties
+            shared = registration_packet(credential, self.challenge, 'https://localhost', registration_mode='shared')
+            normal = registration_packet(credential, self.challenge, 'https://localhost')
+            self.assertEqual(shared, normal)
+            self.assertEqual(base64.b64decode(shared)[0], 2)
+        self.assertEqual(credential['response'], before['response'])
+
+    def test_shared_enrollment_rejects_explicit_nonresident_result(self):
+        credential = self.key('create', self.challenge.options('localhost', registration=True))
+        credential['clientExtensionResults'] = {'credProps': {'rk': False}}
+        with self.assertRaisesRegex(BridgeError, 'requires a discoverable credential'):
+            registration_packet(credential, self.challenge, 'https://localhost', registration_mode='shared')
+
+    def test_signed_authenticator_extensions_are_rejected_without_rewriting(self):
+        self.key.authenticator_extensions = {'credProtect': 2}
+        credential = self.key('create', self.challenge.options('localhost', registration=True))
+        before = copy.deepcopy(credential)
+        with self.assertRaisesRegex(BridgeError, 'signed authenticator extensions'):
+            registration_packet(credential, self.challenge, 'https://localhost')
+        self.assertEqual(credential, before)
+
     def test_assertion_preserves_client_bytes(self):
         credential = self.key('get', self.challenge.options('localhost'))
         packet = assertion_packet(credential, self.challenge, 'https://localhost')
@@ -112,6 +172,57 @@ class ProtocolTests(unittest.TestCase):
         self.server.registration_metadata_eof = True
         self.assertTrue(self.gateway.register('demo_test', 'correct-password', self.key)['registered'])
 
+    def test_shared_enrollment_survives_gateway_restart_without_key_discovery(self):
+        def fresh_gateway():
+            return Gateway(self.gateway.db_config, 'https://localhost', 'localhost',
+                           allow_loopback_plaintext=True, registration_mode='shared')
+        gateway = fresh_gateway()
+        def register(operation, options):
+            self.assertEqual(options['authenticatorSelection']['residentKey'], 'required')
+            credential = self.key(operation, options)
+            credential['clientExtensionResults'] = {'credProps': {'rk': True}}
+            return credential
+        self.assertEqual(gateway.register('demo_test', 'correct-password', register)['registration_mode'], 'shared')
+        self.key.user_verified = False
+        def login(operation, options):
+            self.assertEqual(options['allowCredentials'][0]['id'], b64u(self.key.credential_id))
+            self.assertEqual(options['userVerification'], 'discouraged')
+            return self.key(operation, options)
+        fresh_gateway().connect('demo_test', 'correct-password', login).close()
+
+    def test_shared_enrollment_never_falls_back_on_extension_failure(self):
+        self.gateway.registration_mode = 'shared'
+        self.key.authenticator_extensions = {'credProtect': 1}
+        with self.assertRaisesRegex(BridgeError, 'Shared registration cannot use signed authenticator extensions'):
+            self.gateway.register('demo_test', 'correct-password', self.key)
+        self.assertFalse(any('FINISH' in query for query in self.server.commands))
+        self.assertEqual(self.gateway._credential_hint('demo_test'), b'')
+
+    def test_invalid_registration_mode_fails_before_connecting(self):
+        for value in (None, '', 'auto', True, [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(BridgeError, 'registration_mode'):
+                Gateway(self.gateway.db_config, 'https://localhost', 'localhost',
+                        allow_loopback_plaintext=True, registration_mode=value)
+
+    def test_invalid_per_call_registration_mode_fails_before_connecting(self):
+        with patch('mysql_fido_gateway.mysql_bridge.BrowserConnection') as connection:
+            for value in ('', 'auto', True, [], {}):
+                with self.subTest(value=value), self.assertRaisesRegex(BridgeError, 'registration_mode'):
+                    self.gateway.register('demo_test', 'correct-password', self.key, registration_mode=value)
+            connection.assert_not_called()
+        self.assertEqual(self.gateway.registration_mode, 'browser')
+
+    def test_unexpected_registration_plugin_is_rejected_before_browser_and_finish(self):
+        with patch('mysql_fido_gateway.mysql_bridge.BrowserConnection') as factory:
+            connection = factory.return_value
+            connection.initiate_registration.return_value = (b'challenge', b'other_client_plugin')
+            browser = MagicMock()
+            with self.assertRaisesRegex(BridgeError, 'different client plugin'):
+                self.gateway.register('demo_test', 'correct-password', browser)
+            browser.assert_not_called()
+            connection.cmd_query.assert_not_called()
+            connection.close.assert_called_once()
+
     def test_touch_only_login_uses_mysql_credential_id(self):
         self.assertEqual(self.gateway.rp_id, 'localhost')
         self.gateway.register('demo_test', 'correct-password', self.key)
@@ -119,7 +230,10 @@ class ProtocolTests(unittest.TestCase):
         def touch_only(operation, options):
             self.assertEqual(operation, 'get')
             self.assertEqual(options['userVerification'], 'discouraged')
-            self.assertEqual(options['allowCredentials'], [{'type': 'public-key', 'id': b64u(self.key.credential_id)}])
+            self.assertEqual(options['hints'], ['security-key'])
+            self.assertEqual(options['allowCredentials'], [{
+                'type': 'public-key', 'id': b64u(self.key.credential_id),
+                'transports': ['usb', 'nfc', 'ble']}])
             return self.key(operation, options)
         with self.gateway.connect('demo_test', 'correct-password', touch_only) as connection:
             with connection.cursor() as cursor:
@@ -131,11 +245,62 @@ class ProtocolTests(unittest.TestCase):
         for body in (b'', b'\x00'):
             with self.subTest(body=body):
                 self.server.credential_id_reply = body
+                self.gateway.clear_credential_hint('demo_test')
                 def discover(operation, options):
                     self.assertNotIn('allowCredentials', options)
                     self.assertEqual(options['userVerification'], 'discouraged')
                     return self.key(operation, options)
                 self.gateway.connect('demo_test', 'correct-password', discover).close()
+
+    def test_native_style_discovery_is_remembered_for_later_explicit_key_selection(self):
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        self.gateway.clear_credential_hint('demo_test')
+        self.server.credential_id_reply = b''
+        options_seen = []
+        def browser(operation, options):
+            options_seen.append(copy.deepcopy(options))
+            return self.key(operation, options)
+        self.gateway.connect('demo_test', 'correct-password', browser).close()
+        self.gateway.connect('demo_test', 'correct-password', browser).close()
+        self.assertNotIn('allowCredentials', options_seen[0])
+        self.assertEqual(options_seen[1]['allowCredentials'][0]['id'], b64u(self.key.credential_id))
+        self.assertEqual(options_seen[1]['userVerification'], 'discouraged')
+
+    def test_failed_mysql_assertion_does_not_populate_credential_hint(self):
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        self.gateway.clear_credential_hint('demo_test')
+        self.server.credential_id_reply = b''
+        self.server.reject_signature = True
+        with self.assertRaises(mysql.connector.Error):
+            self.gateway.connect('demo_test', 'correct-password', self.key)
+        self.assertEqual(self.gateway._credential_hint('demo_test'), b'')
+
+    def test_credential_hint_is_scoped_to_account_and_stale_rejection_clears_it(self):
+        self.gateway.register('demo_test', 'correct-password', self.key)
+        self.assertEqual(self.gateway._credential_hint('demo_other'), b'')
+        self.server.credential_id_reply = b''
+        self.server.reject_signature = True
+        with self.assertRaises(mysql.connector.Error):
+            self.gateway.connect('demo_test', 'correct-password', self.key)
+        self.assertEqual(self.gateway._credential_hint('demo_test'), b'')
+
+    def test_credential_hint_has_bounded_lru_storage_and_can_be_disabled(self):
+        self.gateway._credential_hint_capacity = 2
+        self.gateway._remember_credential('one', b'1')
+        self.gateway._remember_credential('two', b'2')
+        self.assertEqual(self.gateway._credential_hint('one'), b'1')
+        self.gateway._remember_credential('three', b'3')
+        self.assertEqual(self.gateway._credential_hint('two'), b'')
+        self.assertEqual(self.gateway._credential_hint('one'), b'1')
+        self.gateway._credential_hint_capacity = 0
+        self.gateway._remember_credential('four', b'4')
+        self.assertEqual(self.gateway._credential_hint('four'), b'')
+
+    def test_credential_hint_capacity_is_explicitly_validated(self):
+        for capacity in [True, -1, 1025, '128']:
+            with self.subTest(capacity=capacity), self.assertRaisesRegex(BridgeError, 'credential_hint_capacity'):
+                Gateway(self.gateway.db_config, 'https://localhost', 'localhost',
+                        allow_loopback_plaintext=True, credential_hint_capacity=capacity)
 
     def test_malformed_credential_id_response_is_rejected(self):
         self.gateway.register('demo_test', 'correct-password', self.key)
@@ -163,6 +328,14 @@ class ProtocolTests(unittest.TestCase):
     def test_password_rejected_by_mysql(self):
         with self.assertRaises(mysql.connector.Error):
             self.gateway.register('demo_test', 'wrong', self.key)
+
+    def test_extension_incompatibility_stops_before_mysql_finish(self):
+        self.key.authenticator_extensions = {'credProtect': 2}
+        with self.assertRaisesRegex(BridgeError, 'signed authenticator extensions'):
+            self.gateway.register('demo_test', 'correct-password', self.key)
+        self.assertTrue(any('INITIATE' in query for query in self.server.commands))
+        self.assertFalse(any('FINISH' in query for query in self.server.commands))
+        self.assertIsNone(self.server.key)
 
     def test_signature_rejected_by_mysql(self):
         self.gateway.register('demo_test', 'correct-password', self.key)
@@ -193,6 +366,27 @@ class ProtocolTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
+    def test_demo_rejects_invalid_registration_choice_before_starting_a_flow(self):
+        from app import create_app
+        gateway = MagicMock(registration_mode='shared', db_config={
+            'host': '127.0.0.1', 'port': 5316, 'ssl_disabled': True})
+        with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+            app = create_app(gateway=gateway)
+        client = app.test_client()
+        client.get('/', base_url='https://localhost')
+        with client.session_transaction() as state:
+            headers = {'Origin': 'https://localhost', 'X-CSRF-Token': state['csrf']}
+        with patch.object(app.extensions['ceremony_broker'], 'create') as start_flow:
+            for value in (None, '', 'auto', True, [], {}):
+                with self.subTest(value=value):
+                    result = client.post('/api/flows', base_url='https://localhost', headers=headers,
+                                         json={'action': 'register', 'username': 'demo_test',
+                                               'password': 'correct-password', 'registration_mode': value})
+                    self.assertEqual(result.status_code, 400)
+                    self.assertIn('registration_mode', result.json['error'])
+            start_flow.assert_not_called()
+        gateway.register.assert_not_called()
+
     def test_admin_setup_and_redacted_command_events(self):
         from app import create_app
         for timeout in (10, 300):
@@ -288,6 +482,54 @@ class WebTests(unittest.TestCase):
 
 
 class WebProtocolTests(unittest.TestCase):
+    def test_demo_choice_controls_one_registration_without_changing_gateway_default(self):
+        from app import create_app
+        for default, choice in (('shared', 'browser'), ('browser', 'shared'), ('shared', None)):
+            with self.subTest(default=default, choice=choice):
+                server = FakeMySQL()
+                try:
+                    gateway = Gateway({'host': '127.0.0.1', 'port': server.port, 'ssl_disabled': True},
+                                      'https://localhost', 'localhost', allow_loopback_plaintext=True,
+                                      registration_mode=default)
+                    with patch.dict(os.environ, {'BROWSER_ORIGIN': 'https://localhost', 'RP_ID': 'localhost'}):
+                        app = create_app(gateway=gateway)
+                    client = app.test_client()
+                    page = client.get('/', base_url='https://localhost')
+                    self.assertIn(f'value="{default}" checked'.encode(), page.data)
+                    with client.session_transaction() as state:
+                        headers = {'Origin': 'https://localhost', 'X-CSRF-Token': state['csrf']}
+                    body = {'action': 'register', 'username': 'demo_test', 'password': 'correct-password'}
+                    if choice is not None:
+                        body['registration_mode'] = choice
+                    response = client.post('/api/flows', base_url='https://localhost', headers=headers, json=body)
+                    self.assertEqual(response.status_code, 202)
+                    path = '/api/flows/' + response.json['flow_id']
+                    mode = choice or default
+                    key = SoftwareKey()
+                    for _ in range(12):
+                        event = client.get(path, base_url='https://localhost').json
+                        if event['type'] == 'webauthn':
+                            selection = event['publicKey']['authenticatorSelection']
+                            self.assertEqual(selection['residentKey'], 'required' if mode == 'shared' else 'discouraged')
+                            self.assertEqual(selection['requireResidentKey'], mode == 'shared')
+                            self.assertEqual(selection['userVerification'], 'required')
+                            self.assertEqual(gateway.registration_mode, default)
+                            credential = key(event['operation'], event['publicKey'])
+                            credential['clientExtensionResults'] = {'credProps': {'rk': mode == 'shared'}}
+                            reply = client.post(path + '/respond', base_url='https://localhost', headers=headers,
+                                                json={'request_id': event['request_id'], 'credential': credential})
+                            self.assertEqual(reply.status_code, 200)
+                        elif event['type'] in {'success', 'error'}:
+                            break
+                    self.assertEqual(event['type'], 'success', event)
+                    self.assertEqual(event['result']['registration_mode'], mode)
+                    self.assertEqual(gateway.registration_mode, default)
+                    with client.session_transaction() as state:
+                        self.assertEqual(set(state), {'owner', 'csrf'})
+                finally:
+                    server.close()
+                self.assertEqual(server.errors, [])
+
     def test_http_registration_and_login_use_real_connector(self):
         from app import create_app
         server = FakeMySQL()
@@ -326,6 +568,9 @@ class WebProtocolTests(unittest.TestCase):
             self.assertEqual(denied['type'], 'error')
             self.assertIn('Access denied before any SQL command was sent', denied['message'])
             self.assertIn('new user password', denied['message'])
+            self.assertNotIn('attestation support', denied['message'])
+            self.assertNotIn('RP/origin compatibility', denied['message'])
+            self.assertIn('No application-authentication fallback was used', denied['message'])
         finally:
             server.close()
         self.assertEqual(server.errors, [])

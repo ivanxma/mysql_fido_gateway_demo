@@ -1,73 +1,70 @@
-# MySQL FIDO application starter
+# MySQL FIDO Flask starter
+
+A Flask application with browser security-key registration, login, and a
+protected main page. MySQL checks the password and WebAuthn factor; application
+SQL runs on that user's authenticated connection through `auth.getConnection()`.
+The security key stays on the user's computer.
+
+The starter includes a minimal `app.py`, editable Jinja templates, CSS,
+JavaScript, and launchers. It uses `mysql_fido_gateway.flask_login` from the
+**0.3.1 wheel**. See `docs/flask-wheel.md` for the API and SQL examples.
+
+## Start
+
+Follow `GETTING_STARTED.md` to install the raw wheel URL and run
+`python -m mysql_fido_gateway newapp`, or download and extract the starter ZIP.
+The generator asks for an application name, MySQL host/port, and TLS choice.
+It writes explicit `MYSQL_HOST` and `MYSQL_PORT` assignments in `app.py` and a
+`.env` connection profile. No MySQL account password is stored.
+
+You need Python 3.10+, Caddy with its local CA trusted, a compatible external
+FIDO2 key, and a prepared MySQL account with WebAuthn factor 2. The launcher does
+not install MySQL, create accounts, or change server policy.
+
+| Platform | Start inside the application folder |
+| --- | --- |
+| macOS | Open `start.command`, or run `python3 start.py` |
+| Windows | Open `start.bat`, or run `py -3 start.py` |
+| Linux | Run `bash start.sh` or `python3 start.py` |
+
+The launcher installs dependencies in `.venv`, configures Caddy, and opens
+`https://localhost/login`. Keep the terminal open; Ctrl+C stops Flask.
+Use `python3 start.py --setup-only` to prepare the application without starting
+services. Other launcher options and remote TLS settings are in
+`GETTING_STARTED.md`.
+
+## Register and sign in
+
+1. On the login page, choose **Register a passkey**.
+2. Enter the provisioned MySQL username/password and complete the key's
+   PIN/touch prompts. MySQL must accept registration before success is shown.
+3. Return to login, enter the same account credentials, and touch the key.
+   Login requests no PIN; browser/key policy can still require one.
+4. On the protected main page, choose **Retrieve Hello World**, then log out.
+
+Default `browser` mode supports the tested Chrome browser flow. To enroll a
+credential for both browser and stock MySQL client login, set
+`REGISTRATION_MODE=shared` in `.env`, restart, and follow the compatible Firefox
+setup in `docs/user-manual.md`. Changing this setting does not convert an
+existing credential. General platform/cloud passkeys are outside this
+prototype's supported profile. See `VALIDATION.md` for the tested scope.
+
+## Customize
+
+| File or folder | Change |
+| --- | --- |
+| `app.py` | Explicit MySQL host/port and protected business routes |
+| `.env` | Database TLS, RP/origin, and registration mode |
+| `templates/auth/` | Banner, layout, login and registration forms |
+| `static/auth.css` | Colors and styling |
+| `static/auth/*.js` | Browser interactions |
+| `templates/main.html`, `static/main.js` | The application page |
+
+Keep the form IDs, field names, action URLs, and status elements used by the
+scripts when changing the layout. Use one Python process: authenticated
+connections and sessions are held in memory. Detailed requirements and limits
+are in `docs/user-manual.md` and `docs/configuration.md`.
 
 This is a personal MIT-licensed prototype/tutorial by ivanxma, not an Oracle
-product or an Oracle-supported service. See `LICENSE`, `DISCLAIMER.md`, and
+product or support offering. See `LICENSE`, `DISCLAIMER.md`, and
 `THIRD_PARTY_LICENSES.md` in the generated/extracted application.
-
-## Download and start
-
-No repository clone is required. Follow `GETTING_STARTED.md`: install the
-public raw wheel URL and run `python -m mysql_fido_gateway newapp`, or extract
-the complete starter ZIP.
-
-The CLI asks for the application name, actual MySQL host and port, and TLS
-choice. It writes visible `MYSQL_HOST` and `MYSQL_PORT` assignments in
-`app.py`, plus `.env`. No MySQL account password is stored.
-
-- macOS: open `start.command`, or run `python3 start.py`.
-- Windows: open `start.bat`, or run `py -3 start.py`.
-- Linux: run `bash start.sh` or `python3 start.py`.
-
-The launcher creates a local `.venv`, installs the wheel, loads the explicit
-connection profile, saves a private Flask signing key, configures the local
-Caddy proxy, starts the application, and opens `https://localhost/login`.
-`python3 start.py --setup-only` prepares files/dependencies without starting
-services. `--reinstall` refreshes a replaced wheel; `--wheel-url HTTPS_URL`
-selects the public wheel directly. Ctrl+C stops Flask.
-
-Python 3.10+ (3.12+ recommended), Caddy with a trusted local CA, and a prepared
-MySQL server/account are prerequisites. The launcher does not install MySQL,
-create an account, change server policy, or configure database grants. Read
-`GETTING_STARTED.md` for the exact prerequisites and remote-TLS profile.
-
-## Connection settings and credentials
-
-`app.py` explicitly passes a mapping to the library:
-
-```python
-app, auth = create_gateway_app(
-    Path(__file__).parent,
-    db_config={
-        'host': MYSQL_HOST,
-        'port': MYSQL_PORT,
-        'ssl_ca': '/path/to/mysql-ca.pem',
-        'ssl_verify_cert': True,
-        'ssl_verify_identity': True,
-    },
-)
-```
-
-Use the real CA path for remote MySQL. For deliberate local development,
-explicitly opt into the loopback exception instead. No host, port, username,
-or password is assumed. Users enter their individual MySQL username/password
-on the login or registration page, and the browser/device handles key PINs.
-
-## Register and use the app
-
-On `/login`, choose **Register a passkey** for a provisioned account with an
-unregistered WebAuthn factor. Enter the account credentials and complete the
-security key's browser PIN/touch ceremony. MySQL must accept enrollment before
-the app reports success. Return to sign-in, enter the username/password, and
-touch the registered key. The protected main page demonstrates application SQL
-on that user's authenticated connection. Log out when finished.
-
-Edit `templates/auth/` for layout/forms, `static/auth.css` for styling,
-`static/auth/*.js` for browser behavior, and the protected routes in `app.py`
-for application SQL. Startup/version checks stay in the library. Keep the
-form IDs, username/password names, action URLs, and live-status elements
-used by the browser scripts intact.
-
-This experimental profile supports compatible external FIDO2 security keys
-and packed ES256/x5c attestation; general platform/cloud passkeys are not
-supported. Simulator tests do not certify a live Enterprise MySQL/physical-key
-deployment. Use one Python process because sessions/connections are in memory.

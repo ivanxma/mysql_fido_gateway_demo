@@ -1,0 +1,23 @@
+flowchart LR
+    subgraph User["User computer"]
+        Key["FIDO2 key<br/>PIN and private key"]
+        Browser["Browser"]
+        Key <-->|"WebAuthn"| Browser
+    end
+    subgraph Server["Application server"]
+        App["HTTPS proxy :443<br/>↓ loopback HTTP<br/>Flask + gateway"]
+    end
+    subgraph Private["Private database network"]
+        DB[("MySQL<br/>Passwords + WebAuthn<br/>SQL grants")]
+    end
+    Browser <-->|"HTTPS"| App
+    App <-->|"Verified DB TLS"| DB
+    classDef user fill:#eef6f3,stroke:#47736b,color:#25342f;
+    classDef service fill:#fcfaf7,stroke:#c74634,color:#312d2a;
+    classDef database fill:#f0ece6,stroke:#625d58,color:#312d2a;
+    class Key,Browser user;
+    class App service;
+    class DB database;
+    style User fill:#ffffff,stroke:#b9b0a6,color:#312d2a
+    style Server fill:#ffffff,stroke:#b9b0a6,color:#312d2a
+    style Private fill:#ffffff,stroke:#b9b0a6,color:#312d2a

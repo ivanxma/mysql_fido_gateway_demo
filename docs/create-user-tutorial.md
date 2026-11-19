@@ -6,7 +6,7 @@ The [combined demo](../app.py) keeps all three actions on one page. Each tutoria
 
 ## Step 1 Prepare the server
 
-Use Python 3.12+, a checkout of this repository, a trusted local HTTPS proxy, and an administrator account on a test MySQL Enterprise server with the WebAuthn plugin. See the [requirements](user-manual.md#requirements). This tutorial uses MySQL at `127.0.0.1:5316`, browser origin `https://localhost`, and RP ID `localhost`.
+Use Python 3.12+, a checkout of this repository, a trusted local HTTPS proxy, and an administrator account on a test MySQL server with the WebAuthn plugin. See the [requirements](user-manual.md#requirements). This tutorial uses MySQL at `127.0.0.1:5316`, browser origin `https://localhost`, and RP ID `localhost`.
 
 From an administrator MySQL connection, inspect:
 
@@ -40,7 +40,7 @@ cd ../tutorial_create_user
 python3 -m venv .venv
 source .venv/bin/activate
 python "${GATEWAY_SOURCE}/scripts/build_release.py"
-python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+python -m pip install "${GATEWAY_SOURCE}/dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 cp -R "${GATEWAY_SOURCE}/docs/examples/create_user_app/." .
 ```
 

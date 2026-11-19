@@ -12,11 +12,11 @@ import time
 from urllib.parse import urlsplit
 import webbrowser
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 WHEEL = f'mysql_browser_fido_gateway-{VERSION}-py3-none-any.whl'
 ROOT = Path(__file__).resolve().parent
 WHEEL_URL = ('https://raw.githubusercontent.com/ivanxma/mysql_fido_gateway_demo/'
-             'main/downloads/0.3.0/' + WHEEL)
+             'main/downloads/0.3.1/' + WHEEL)
 
 
 def load_environment(root, inherited=None):

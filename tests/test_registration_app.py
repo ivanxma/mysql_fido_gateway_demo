@@ -114,6 +114,17 @@ class RegistrationAppTests(unittest.TestCase):
         self.assertEqual(self.get('/main').status_code, 302)
         self.assertEqual(self.finish(self.start())['type'], 'success')
 
+    def test_shared_profile_cannot_be_downgraded_by_form_and_explains_failure(self):
+        self.gateway.registration_mode = 'shared'
+        self.assertIn(b'compatible Firefox setup', self.get('/register').data)
+        self.key.authenticator_extensions = {'credProtect': 1}
+        path = self.start(registration_mode='browser')
+        event = self.finish(path)
+        self.assertEqual(event['type'], 'error')
+        self.assertIn('Shared registration cannot use signed authenticator extensions', event['message'])
+        self.assertNotIn('FINISH', '\n'.join(self.server.commands))
+        self.assertFalse(self.auth.logins)
+
     def test_csrf_owner_route_isolation_and_concurrent_action_guards(self):
         self.assertEqual(self.client.post('/api/register', base_url='https://localhost', json={}).status_code, 403)
         self.assertEqual(self.post('/api/register', {'username': 'root', 'password': 'x'}).status_code, 400)

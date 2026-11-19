@@ -5,7 +5,7 @@ For a first install, use [Getting started without cloning](../GETTING_STARTED.md
 The wheel includes the FIDO transport, Flask login/session utility, and linked login/registration templates, shared WebAuthn JavaScript, and stylesheet. Applications can use their authenticated user's connection for application SQL.
 
 ```bash
-python -m pip install './dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]'
+python -m pip install './dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]'
 ```
 
 Use the actual path to the wheel in another project. The existing `[demo]` extra also works; core `Gateway` imports remain independent of Flask. Have an explicitly configured MySQL target and provisioned account first, and use the environment and HTTPS settings in [the login tutorial](login-main-tutorial.md#step-3-set-the-environment).
@@ -26,12 +26,12 @@ The wheel contains library modules and the bundled authentication templates and 
 From the repository root with `.venv` created:
 
 ```bash
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 ./start.sh
 ```
 
-`--check-library` prints version 0.3.0 and the package's installed location without starting Flask or connecting to MySQL. The direct script and launcher use isolated Python imports so the source package beside `app.py` does not shadow the installed wheel. The launcher checks the wheel before changing the HTTPS proxy. Follow the [manual](user-manual.md#install-and-start-the-local-reference-application) for MySQL and HTTPS prerequisites.
+`--check-library` prints version 0.3.1 and the package's installed location without starting Flask or connecting to MySQL. The direct script and launcher use isolated Python imports so the source package beside `app.py` does not shadow the installed wheel. The launcher checks the wheel before changing the HTTPS proxy. Follow the [manual](user-manual.md#install-and-start-the-local-reference-application) for MySQL and HTTPS prerequisites.
 
 ### Upgrade or rebuild the library
 
@@ -39,11 +39,30 @@ After changing library source, run from the source checkout:
 
 ```bash
 .venv/bin/python scripts/build_release.py
-.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.0-py3-none-any.whl[flask]"
+.venv/bin/python -m pip install --force-reinstall "./dist/mysql_browser_fido_gateway-0.3.1-py3-none-any.whl[flask]"
 .venv/bin/python app.py --check-library
 ```
 
 Stop the running Flask process and restart it after installation; already imported code remains in memory until restart. Reinstall the wheel in each application's virtual environment, using its actual wheel path. `--force-reinstall` also handles rebuilding the same development version. This release pins Connector/Python 26.10.0 and cbor2 5.9.0; the `[flask]` and compatible `[demo]` extras add Flask 3.1.3. There is no need to install Flask for core-only custom transports.
+
+When upgrading a generated 0.3.0 starter, update its `start.py` version/download
+path and `requirements.txt` to 0.3.1 as well. Replace its local wheel when using
+the ZIP's `wheels/` directory. Otherwise the old launcher's version check may
+reinstall 0.3.0. Preserve application configuration and customized frontend files.
+
+The default `browser` registration mode discourages discoverable credentials, retains the
+credential ID at MySQL, and rejects unsupported signed authenticator extensions
+before FINISH. It does not change signed JSON or authenticator data. Optional
+`credProps.rk` metadata is not required. Security-key hints and external-key
+transports also guide login away from the phone/QR flow. Existing server-accepted
+registrations are not deleted by the upgrade; test login before considering any
+deliberate re-enrollment.
+
+For discoverable enrollment intended for both browser and native-client use,
+set `REGISTRATION_MODE=shared` before startup, or pass `registration_mode='shared'`
+to `create_gateway_app`, `create_demo_app`, or `create_action_app`. Existing
+injected `Gateway` objects keep their own configured mode. This changes new
+registration only and requires the [compatible browser setup](user-manual.md#shared-browser-and-native-client-enrollment).
 
 For a copied application outside the source checkout, check its interpreter's installed version and location with:
 
@@ -200,4 +219,4 @@ Build with `python scripts/build_release.py`. Import `mysql_fido_gateway.flask_l
 
 The utility retains one process and in-memory sessions: one authenticated worker/connection per login, at most 32 sessions, an absolute default lifetime of 300 seconds, and a 20-second wait for each queued operation. Logout, expiry, failed health checks, restart, and uncertain cleanup require a new login. It never caches passwords or reconnects automatically. A timed-out write can have an uncertain outcome; inspect application state before retrying. Live connections cannot be serialized into cookies or distributed session stores.
 
-The wheel retains the [experimental MySQL/YubiKey interoperability limits](../README.md#status-and-exact-limits).
+The wheel retains the [experimental MySQL/YubiKey interoperability limits](user-manual.md#limitations).

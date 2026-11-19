@@ -17,7 +17,8 @@ The documented Flask factories and SQL helpers are optional interfaces imported 
 ## Gateway constructor
 
 ```python
-Gateway(db_config, origin, rp_id, *, allow_loopback_plaintext=False)
+Gateway(db_config, origin, rp_id, *, allow_loopback_plaintext=False,
+        credential_hint_capacity=128, registration_mode='browser')
 ```
 
 | Parameter | Type | Required/default | Description |
@@ -26,10 +27,23 @@ Gateway(db_config, origin, rp_id, *, allow_loopback_plaintext=False)
 | `origin` | `str` | Required | Exact expected browser origin, currently `https://` followed by `rp_id`, without a port/path |
 | `rp_id` | `str` | Required | Expected relying-party ID in MySQL's challenge and the authenticator RP hash |
 | `allow_loopback_plaintext` | `bool`, keyword only | `False` | Permit unverified/plaintext DB transport only when the configured host is exactly `127.0.0.1`, `::1`, or `localhost` |
+| `credential_hint_capacity` | `int`, keyword only | `128` | Bound the in-memory public credential-ID hint cache, per Gateway/database/RP and username; 0 disables learning; allowed 0–1024 |
+| `registration_mode` | `str`, keyword only | `'browser'` | `'browser'` requests non-discoverable enrollment; `'shared'` requires discoverable enrollment for stock native-client discovery. Both retain the ID in MySQL. See [shared enrollment](user-manual.md#shared-browser-and-native-client-enrollment) for browser restrictions and validation status |
 
 Construction returns a `Gateway` object. It checks the installed connector version, origin profile, database TLS policy, and forbidden shared-credential/pool/database keys. It does not open a database connection, confirm server variables, or test the CA file against a server.
 
 `Gateway` reads **no environment variables**. See [configuration](configuration.md) for how the reference application builds its arguments.
+
+After MySQL accepts registration or authentication, the adapter may remember
+the returned credential ID as a routing hint. If MySQL later returns no ID,
+the hint supplies an explicit browser allow-list, avoiding repeated discovery
+and account selection where browser/key policy permits. A server-supplied ID
+takes precedence. Hints never authorize login; MySQL verifies every assertion.
+The bounded LRU cache contains no passwords/private keys, is process-local and
+clears on restart. Initial discovery may still require PIN/selection; key policy
+cannot be overridden. `gateway.clear_credential_hint(username)` forgets a hint
+without changing the MySQL account or key. A rejected signed assertion (1045)
+clears a stale hint; the next user-initiated attempt can discover the replacement.
 
 Example for a remote database:
 
@@ -52,14 +66,14 @@ bridge = Gateway(
 
 For a disposable local database, use `host='127.0.0.1'`, the desired DB port, and explicitly set `allow_loopback_plaintext=True`. That exception concerns **database transport**, not the browser origin.
 
-The object exposes `db_config`, `origin`, and `rp_id` attributes. Treat them as configuration fixed for the lifetime of the instance; do not mutate shared configuration during concurrent requests.
+The object exposes `db_config`, `origin`, `rp_id`, and `registration_mode` attributes. Treat them as configuration fixed for the lifetime of the instance; do not mutate shared configuration during concurrent requests.
 
 **Errors:** `BridgeError` for the constructor's policy/version checks. Invalid Python argument types may also raise ordinary Python exceptions. Actual network or server errors happen later, when an operation connects.
 
 ## Gateway register
 
 ```python
-bridge.register(username, password, ask, *, on_command=None)
+bridge.register(username, password, ask, *, on_command=None, registration_mode=None)
 ```
 
 | Parameter | Type | Required/default | Description |
@@ -68,13 +82,14 @@ bridge.register(username, password, ask, *, on_command=None)
 | `password` | `str` | Required | That account's password factor 1, not root's password or the key PIN |
 | `ask` | Callable | Required | Blocking browser exchange callback described below; registration calls it with operation `create` |
 | `on_command` | Callable or `None`, keyword only | `None` | Optional SQL-display callback receiving a single display string before each registration statement is attempted |
+| `registration_mode` | `str` or `None`, keyword only | `None` | Per-call override: `'browser'` or `'shared'`; `None` uses the instance default. Validated before connecting. Never changes the instance or another registration |
 
 The account must already exist and require WebAuthn factor 2. The operation opens a fresh connection, enters pending-registration mode, runs INITIATE, calls the browser, validates the returned response shape, and runs FINISH on the same connection. It closes the connection before returning, including when registration fails after the connection was established.
 
 **Return value on acceptance:**
 
 ```python
-{"registered": True, "verified_by": "MySQL FINISH REGISTRATION OK"}
+{"registered": True, "verified_by": "MySQL FINISH REGISTRATION OK", "registration_mode": "browser"}
 ```
 
 The reference app adds its own `message` field after this return. `Gateway.register()` does not create accounts, install plugins, change server settings, grant privileges, or delete key passkeys. Account creation and server setup are separate administrator operations in `mysql_fido_gateway.flask_util`; their root connections close after each operation.
@@ -137,7 +152,7 @@ credential = ask(operation, public_key_options)
 
 Run the operation in a worker. `ask()` must send options to the same user's browser and block until its matching, expiring response arrives. `Flow.ask` implements this pattern. It must not invoke a USB key on the gateway machine or ask the remote user for a PIN in a terminal.
 
-For creation, options include `challenge`, `rp`, `user`, ES256 algorithm `-7`, a 120-second hint, direct attestation, cross-platform attachment, required resident key, and required user verification. For login they include `challenge`, `rpId`, the same timeout hint, discouraged verification, and `allowCredentials` when MySQL supplied an ID.
+For creation, options include `challenge`, `rp`, `user`, ES256 algorithm `-7`, a 120-second hint, direct attestation, cross-platform attachment, required user verification, and optional `credProps`. Mode `browser` uses `residentKey='discouraged'` and `requireResidentKey=false`; mode `shared` uses `residentKey='required'` and `requireResidentKey=true`. Shared mode rejects an explicit `credProps.rk=false`; omitted metadata is allowed because the browser request requires a discoverable credential. Neither mode strips signed extensions or falls back to another mode on rejection. Both ceremonies include `hints=['security-key']`. Login includes `challenge`, `rpId`, the same timeout hint, discouraged verification, and `allowCredentials` with `usb`/`nfc`/`ble` transports when MySQL supplied an ID. MySQL verifies the actual proof. A registration result confirms MySQL acceptance, not a separate native-client test.
 
 All byte strings in the following illustrative shape are base64url without padding:
 
@@ -208,7 +223,9 @@ from app import create_app
 app = create_app(gateway=None)
 ```
 
-`gateway` optionally supplies a truthy compatible gateway object for testing/integration. It must offer the methods/signatures used by the routes, including `register(..., on_command=...)`. With no injected object, the factory creates Gateway from environment configuration. The factory returns Flask and does not start its listener. Running the module as a script starts the fixed loopback development listener.
+`gateway` optionally supplies a truthy compatible gateway object for testing/integration. It must offer the methods/signatures used by the routes, including `register(..., on_command=..., registration_mode=...)`. With no injected object, the factory creates Gateway from environment configuration. The factory returns Flask and does not start its listener. Running the module as a script starts the fixed loopback development listener.
+
+The combined demo's registration form selects `browser` or `shared` per operation. Its `POST /api/flows` registration body accepts `registration_mode`; omission uses the gateway default, while any other value (including JSON `null`) returns HTTP 400 before a flow or connection is created. Only `create_demo_app` enables this form choice. The single-action tutorial and retained-login registration routes keep their configured mode.
 
 The created app exposes `app.extensions['browser_gateway']` and `app.extensions['ceremony_broker']`. Administrator routes still use the environment-derived `db_config` and a separate root connection, even with a supplied gateway object.
 
@@ -277,7 +294,7 @@ The reference routes are a specific browser transport, not methods on Gateway. T
 | --- | --- | --- | --- |
 | `setup` | `action`, `admin_token`, `root_password` | None | Check plugin; persist RP ID and timeout; verify by read-back |
 | `create` | `action`, `admin_token`, `root_password`, `username`, `password` | `reset`: JSON boolean, default false | Provision the demo account, optionally after an explicit drop |
-| `register` | `action`, `username`, `password` | None | Enroll the existing account's key |
+| `register` | `action`, `username`, `password` | `registration_mode` (`browser` or `shared`, combined demo only) | Enroll the existing account's key |
 | `login` | `action`, `username`, `password` | None | Authenticate and execute the proof query |
 
 Usernames must match `[A-Za-z0-9_]{1,32}`; `root` is rejected case-insensitively for user actions. Create additionally requires the case-sensitive `demo_` prefix. User passwords must be nonempty strings of at most 1,024 characters. The API only treats `reset` as enabled when its decoded JSON value is exactly `true`.
@@ -359,11 +376,11 @@ These are explicit-import implementation helpers in `mysql_fido_gateway.codec`, 
 | `client_data(credential, challenge, origin, ceremony)` | Credential dictionary; Challenge; exact origin; `webauthn.create` or `webauthn.get` | Original client-data bytes after type, challenge, exact-origin, and cross-origin checks |
 | `auth_data(raw, rp_id, registration=False)` | Authenticator bytes; RP ID; registration flag | `None` after RP hash/presence checks; enrollment additionally requires verification and attested-credential data |
 | `assertion_packet(credential, challenge, origin)` | Browser assertion; Challenge; origin | MySQL binary assertion payload with one assertion; does not independently verify the signature against a credential registry |
-| `registration_packet(credential, challenge, origin)` | Browser creation credential; Challenge; origin | **Standard base64** response string for FINISH, after packed ES256/x5c and credential-ID checks |
+| `registration_packet(credential, challenge, origin, *, registration_mode='browser')` | Browser creation credential; Challenge; origin; enrollment mode | **Standard base64** response string for FINISH, after packed ES256/x5c, no-signed-extensions, and credential-ID checks; capability `0x02` keeps the credential ID at MySQL; signed response bytes are preserved |
 
 `Reader(data)` copies bytes into a bounded protocol reader. `take(count)` returns the next count bytes, `integer()` consumes a valid non-NULL MySQL length integer, `blob()` consumes a length-prefixed byte string, and `end()` returns `None` only when no trailing bytes remain. Malformed/truncated payloads raise BridgeError.
 
-`Challenge(flags, salt, rp_id, account=b'')` is a frozen dataclass. `flags` is the capability byte, `salt` the challenge bytes, `rp_id` the ASCII domain, and `account` the registration account bytes. Prefer `Challenge.parse(raw, registration=False)`: it decodes MySQL challenge bytes, or standard-base64 registration input, validates a 32-byte salt and RP field, and consumes the full payload. `challenge.options(expected_rp, registration=False)` verifies RP equality and returns JSON-compatible creation/assertion options. The registration browser user ID is a SHA-256 digest of the account bytes.
+`Challenge(flags, salt, rp_id, account=b'')` is a frozen dataclass. `flags` is the capability byte, `salt` the challenge bytes, `rp_id` the ASCII domain, and `account` the registration account bytes. Prefer `Challenge.parse(raw, registration=False)`: it decodes MySQL challenge bytes, or standard-base64 registration input, validates a 32-byte salt and RP field, and consumes the full payload. `challenge.options(expected_rp, registration=False, *, registration_mode='browser')` verifies RP equality and returns JSON-compatible creation/assertion options. The registration browser user ID is a SHA-256 digest of the account bytes.
 
 `Exchange`, `BrowserPlugin`, `BrowserAuthenticator`, `BrowserConnection`, and its `initiate_registration()` reader are private adapter machinery in `mysql_bridge.py`. Their connector hooks and constructor details are not extension points. `TESTED_CONNECTOR` is the internal version constant, not an environment override. Changing these internals requires protocol-level validation with the target connector/server.
 
@@ -373,8 +390,13 @@ Install the `flask` extra (or the compatible `demo` extra) to use `mysql_fido_ga
 
 | Function | Parameters | Result |
 | --- | --- | --- |
-| `create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None)` | `root`: `pathlib.Path` with the demo's templates/static. Optional `gateway`: injected Gateway-compatible object for tests | Flask app with setup, create, register, and login enabled |
-| `create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None)` | Same `root`/`gateway`. `action`: exactly `create` or `register`; other values raise `BridgeError` | Flask app with only the chosen action enabled; other submitted actions are rejected |
+| `create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None, registration_mode=None)` | `root`: `pathlib.Path` with the demo's templates/static. Optional `gateway`: injected Gateway-compatible object for tests | Flask app with setup, create, register, and login enabled |
+| `create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None, registration_mode=None)` | Same `root`/`gateway`. `action`: exactly `create` or `register`; other values raise `BridgeError` | Flask app with only the chosen action enabled; other submitted actions are rejected |
+
+When constructing a gateway, `registration_mode` selects `browser` or `shared`;
+`None` reads `REGISTRATION_MODE`, defaulting to `browser`. An injected gateway
+keeps its own configuration. Only the combined demo enables a per-registration
+mode choice in its form.
 
 The helpers use the [reference application's environment settings](configuration.md), secure cookies, exact Origin/CSRF checks, one-use broker replies, and background workers. The combined demo uses cookie `gateway_create_login_register_setup`; single-action tutorials use `gateway_create` or `gateway_register`. They intentionally display the configured administrator token on administrator pages for this demo; MySQL passwords and key PINs are not displayed.
 

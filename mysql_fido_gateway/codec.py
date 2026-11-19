@@ -12,6 +12,12 @@ class BridgeError(Exception):
     """A closed-failure protocol, policy, or compatibility error."""
 
 
+def check_registration_mode(mode):
+    if mode not in ('browser', 'shared'):
+        raise BridgeError('registration_mode must be browser or shared')
+    return mode
+
+
 def b64u(data):
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
 
@@ -107,10 +113,11 @@ class Challenge:
             raise BridgeError('Invalid MySQL challenge or RP ID')
         return cls(flags, salt, rp, account)
 
-    def options(self, expected_rp, registration=False):
+    def options(self, expected_rp, registration=False, *, registration_mode='browser'):
         if self.rp_id != expected_rp:
             raise BridgeError('MySQL RP ID differs from RP_ID. Do not rewrite signed challenges.')
         if registration:
+            shared = check_registration_mode(registration_mode) == 'shared'
             return {
                 'challenge': b64u(self.salt),
                 'rp': {'id': self.rp_id, 'name': 'MySQL Browser Gateway Prototype'},
@@ -118,14 +125,16 @@ class Challenge:
                          'name': self.account.decode('utf-8', errors='replace'),
                          'displayName': self.account.decode('utf-8', errors='replace')},
                 'pubKeyCredParams': [{'type': 'public-key', 'alg': -7}],
-                'timeout': 120000, 'attestation': 'direct',
+                'timeout': 120000, 'attestation': 'direct', 'hints': ['security-key'],
                 'authenticatorSelection': {'authenticatorAttachment': 'cross-platform',
-                                          'residentKey': 'required',
-                                          'requireResidentKey': True,
+                                          'residentKey': 'required' if shared else 'discouraged',
+                                          'requireResidentKey': shared,
                                           'userVerification': 'required'},
+                'extensions': {'credProps': True},
             }
         return {'challenge': b64u(self.salt), 'rpId': self.rp_id,
-                'timeout': 120000, 'userVerification': 'discouraged'}
+                'timeout': 120000, 'userVerification': 'discouraged',
+                'hints': ['security-key']}
 
 
 def client_data(credential, challenge, origin, ceremony):
@@ -173,7 +182,8 @@ def assertion_packet(credential, challenge, origin):
     return b'\x02' + lc_int(1) + lc_bytes(cbor2.dumps(raw)) + lc_bytes(signature) + lc_bytes(data)
 
 
-def registration_packet(credential, challenge, origin):
+def registration_packet(credential, challenge, origin, *, registration_mode='browser'):
+    shared = check_registration_mode(registration_mode) == 'shared'
     data = client_data(credential, challenge, origin, 'webauthn.create')
     try:
         attestation = cbor_value(unb64u(credential['response']['attestationObject']))
@@ -183,6 +193,30 @@ def registration_packet(credential, challenge, origin):
     except (KeyError, TypeError) as error:
         raise BridgeError('Incomplete registration attestation') from error
     auth_data(raw, challenge.rp_id, registration=True)
+    # MySQL's libfido2 verifier does not configure expected authenticator
+    # extensions. Browser-added credProtect on discoverable credentials can
+    # therefore fail verification even when the attestation signature is valid.
+    # Never remove an extension: authenticator data is covered by the signature.
+    if raw[32] & 0x80:
+        if shared:
+            raise BridgeError('Shared registration cannot use signed authenticator extensions with this MySQL version. '
+                              'Use Firefox with its direct security-key backend; Chrome/Edge add an incompatible '
+                              'extension for discoverable credentials. No credential was sent to MySQL.')
+        raise BridgeError('This MySQL compatibility profile does not support signed '
+                          'authenticator extensions during registration. Use the updated '
+                          'credential-ID-based enrollment options with a compatible browser/key. '
+                          'No credential was sent to MySQL.')
+    # required prevents a conforming browser from silently creating a
+    # non-discoverable credential. credProps is optional, but an explicit false
+    # result must never be accepted as shared enrollment.
+    if shared:
+        extensions = credential.get('clientExtensionResults', {})
+        properties = extensions.get('credProps', {}) if isinstance(extensions, dict) else None
+        if not isinstance(properties, dict):
+            raise BridgeError('Invalid credential properties')
+        if properties.get('rk') is False:
+            raise BridgeError('Shared registration requires a discoverable credential. '
+                              'The browser reported a non-discoverable credential; no response was sent to MySQL.')
     # Deliberately narrow, testable compatibility profile: YubiKey FIDO2 packed
     # ES256 attestation with x5c. No conversion of 'none' to fabricated attestation.
     if (fmt != 'packed' or statement.get('alg') != -7
@@ -197,5 +231,9 @@ def registration_packet(credential, challenge, origin):
         raise BridgeError('Credential ID differs from attested ID')
     fields = [cbor2.dumps(raw), statement['sig'], statement['x5c'][0], data,
               cbor2.dumps(statement), fmt.encode('ascii')]
-    # RESIDENT_KEYS | SEND_FULL_ATTESTATION_BLOB, matching the native client's profile.
-    return base64.b64encode(b'\x03' + b''.join(lc_bytes(value) for value in fields)).decode('ascii')
+    # SEND_FULL_ATTESTATION_BLOB only: MySQL must retain the credential ID for
+    # an explicit login allow-list. Do not infer this from optional credProps.rk
+    # metadata, which browsers may omit. This is a MySQL storage decision:
+    # retaining the ID does not disable discoverability on the physical key.
+    # Signed response bytes stay unchanged for both enrollment modes.
+    return base64.b64encode(b'\x02' + b''.join(lc_bytes(value) for value in fields)).decode('ascii')

@@ -27,7 +27,7 @@ def main():
     if starter.exists():
         shutil.rmtree(starter)
     copy_clean(ROOT / 'docs/examples/login_app', starter)
-    for name in ['LICENSE', 'DISCLAIMER.md', 'THIRD_PARTY_LICENSES.md', 'GETTING_STARTED.md']:
+    for name in ['LICENSE', 'DISCLAIMER.md', 'THIRD_PARTY_LICENSES.md', 'GETTING_STARTED.md', 'VALIDATION.md']:
         copy_clean(ROOT / name, starter / name)
     copy_clean(ROOT / 'licenses', starter / 'licenses')
     copy_clean(ROOT / 'docs', starter / 'docs')

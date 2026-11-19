@@ -69,8 +69,11 @@ class ActionTutorialTests(unittest.TestCase):
             self.assertIn(b'Register your YubiKey', page.data)
             self.assertNotIn(b'data-action="login"', page.data)
             self.assertNotIn(b'synthetic-demo-token', page.data)
+            self.assertNotIn(b'name="registration_mode"', page.data)
             key = SoftwareKey()
-            body = dict(action='register', username='demo_tutorial', password='correct-password')
+            # Single-action tutorials keep the configured mode; only the combined demo opts in.
+            body = dict(action='register', username='demo_tutorial', password='correct-password',
+                        registration_mode='shared')
             for action in ('setup', 'create', 'login'):
                 self.assertEqual(client.post('/api/flows', base_url='https://localhost', headers=headers,
                                              json={**body, 'action': action}).status_code, 400)
@@ -81,6 +84,7 @@ class ActionTutorialTests(unittest.TestCase):
                 event = client.get(path, base_url='https://localhost').json
                 if event['type'] == 'webauthn':
                     self.assertEqual(event['operation'], 'create')
+                    self.assertEqual(event['publicKey']['authenticatorSelection']['residentKey'], 'discouraged')
                     credential = key(event['operation'], event['publicKey'])
                     self.assertEqual(client.post(path + '/respond', base_url='https://localhost',
                                                  headers=headers, json={'request_id': event['request_id'],

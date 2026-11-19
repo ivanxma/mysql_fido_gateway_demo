@@ -68,6 +68,7 @@ for (const form of document.querySelectorAll('form')) {
     const proof = panel.querySelector('.proof');
     const button = form.querySelector('button');
     const payload = Object.fromEntries(new FormData(form));
+    const modeInputs = form.querySelectorAll('input[name=registration_mode]');
     payload.action = form.dataset.action;
     payload.reset = form.elements.reset ? form.elements.reset.checked : false;
     if (proof) proof.textContent = '';
@@ -77,6 +78,7 @@ for (const form of document.querySelectorAll('form')) {
     notify(`${form.querySelector('button').textContent.trim()}: connecting to MySQL…`);
     operationMessage.closest('.operation-notifications').scrollIntoView({behavior: 'smooth', block: 'start'});
     button.disabled = true;
+    modeInputs.forEach(input => input.disabled = true);
     form.querySelectorAll('input[type=password]:not([name=admin_token])').forEach(input => input.value = '');
     try {
       if (['register', 'login'].includes(payload.action) && (!window.isSecureContext || !window.PublicKeyCredential)) {
@@ -128,6 +130,7 @@ for (const form of document.querySelectorAll('form')) {
       payload.password = payload.root_password = payload.admin_token = '';
       activeOperation = false;
       button.disabled = false;
+      modeInputs.forEach(input => input.disabled = false);
     }
   });
 }

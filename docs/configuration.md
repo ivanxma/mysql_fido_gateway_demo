@@ -2,7 +2,7 @@
 
 ## Configuration layers
 
-The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) imports `create_demo_app` from `mysql_fido_gateway.flask_util` in the installed 0.3.0 wheel, which translates environment values into `Gateway` arguments. Its direct entry point and launcher use isolated Python imports to avoid source-checkout shadowing; `python app.py --check-library` reports the selected version and package location without starting the server. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management.
+The reusable `Gateway` class takes explicit Python arguments. It does **not** read environment variables or `.env` files. The [reference app.py](../app.py) imports `create_demo_app` from `mysql_fido_gateway.flask_util` in the installed 0.3.1 wheel, which translates environment values into `Gateway` arguments. Its direct entry point and launcher use isolated Python imports to avoid source-checkout shadowing; `python app.py --check-library` reports the selected version and package location without starting the server. `start.sh` adds shell-file loading, local defaults, token generation, and HTTPS proxy management.
 
 The three separate tutorials use backend 5004 for [create user](create-user-tutorial.md), 5002 for [registration](registration-tutorial.md), and 5003 for [login/main](login-main-tutorial.md). Each includes its own HTTPS proxy target. Create-user and registration use `create_action_app` from the shared Flask helper, with distinct cookie names `gateway_create` and `gateway_register`.
 
@@ -50,10 +50,11 @@ These are all environment variables currently read by the application or launche
 | --- | --- | --- | --- |
 | `BROWSER_ORIGIN` | `https://localhost`; trailing `/` removed | Local mode forces `https://localhost`; remote mode defaults to `https://$RP_ID` | Exact browser origin used for signed data and POST Origin checks |
 | `RP_ID` | `localhost` | Defaults to `localhost`; local mode forces it | WebAuthn relying-party domain; must match the MySQL server challenge |
+| `REGISTRATION_MODE` | `browser` | Inherited or loaded from `.env` | `browser` for credential-ID enrollment; `shared` requires a discoverable credential and a compatible browser backend. Sets the initial registration-mode selection in the combined demo; other apps keep this configured policy. Applies only to new registrations; see [shared enrollment](user-manual.md#shared-browser-and-native-client-enrollment) |
 | `DB_HOST` | Required; no default | Must be configured | Database connection target; remote TLS needs a certificate-matching hostname |
 | `DB_PORT` | Required integer, 1–65535; no default | Must be configured | MySQL classic-protocol TCP port |
 | `DB_SSL_CA` | Unset | Inherited or loaded from `.env` | CA file for database TLS; a nonempty value enables certificate and hostname verification |
-| `ALLOW_LOOPBACK_DB_PLAINTEXT` | Only exact string `1` enables the exception | If unset, no CA is set, and DB host is `127.0.0.1`, `::1`, or `localhost`, sets `1`; preserves an explicitly supplied value | Development exception to mandatory database certificate validation for these loopback host strings only |
+| `ALLOW_LOOPBACK_DB_PLAINTEXT` | Only exact string `1` enables the exception | Inherited or loaded from `.env`; never inferred | Development exception to mandatory database certificate validation for these loopback host strings only; does not disable TLS |
 | `DB_ACCOUNT_HOST` | `localhost` | Defaults to `localhost` | Host part used when creating/dropping a demo account; this is not a connection target |
 | `FLASK_SECRET_KEY` | Fresh random 32-byte hex secret when absent/empty | No automatic persistence | Signs the demo session cookie; a stable secret preserves cookie validity but cannot restore pending flows or live connections after restart |
 | `ADMIN_TOKEN` | Absent/empty disables administrator actions | For local origin, generates a token only when unset; explicitly empty remains disabled. Prints any nonempty effective token | Application authorization gate for server setup and user creation; not a database password |
@@ -161,6 +162,14 @@ General browser support for HTTP localhost does not remove this code's HTTPS che
 | `write_timeout` | Seconds | `15` | Connector write timeout |
 
 Without the loopback exception, the Gateway constructor rejects `ssl_disabled` or missing/false CA/certificate/identity verification settings. The exception permits a connection without verified TLS; it does not force plaintext if the connector negotiates TLS.
+
+Keep MySQL TLS enabled for password authentication. The pinned pure-Python
+connector does not implement RSA password exchange for `caching_sha2_password`.
+With `ssl_disabled=True`, a newly created account can return 1045 before SQL even
+with the correct password. An account previously authenticated over TLS can
+appear to work because MySQL caches password authentication; that is not a
+reliable plaintext configuration. The reference `app.py` leaves TLS enabled.
+See the [real-server reproduction](../VALIDATION.md#fresh-account-password-authentication-and-mysql-tls).
 
 Gateway rejects these keys in `db_config`: `user`, `password`, `password1`, `pool_name`, `pool_size`, and `database`. Keep all account credentials out of this dictionary, including alternate credential option names; the rejection list is not a general-purpose configuration sanitizer. Supply credentials to `register()` or `connect()` and select a business database only after authentication. Do not enable shared-account pooling.
 

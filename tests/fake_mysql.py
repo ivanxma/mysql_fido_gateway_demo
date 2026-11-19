@@ -167,7 +167,8 @@ class FakeMySQL:
                           metadata_eof=self.registration_metadata_eof)
             elif 'FINISH REGISTRATION' in query:
                 encoded = re.search(r"AS '([^']+)'", query).group(1)
-                r = Reader(base64.b64decode(encoded)); assert r.take(1) == b'\x03'
+                # Clearing RESIDENT_KEYS asks MySQL to retain the credential ID.
+                r = Reader(base64.b64decode(encoded)); assert r.take(1) == b'\x02'
                 auth = cbor2.loads(r.blob()); signature = r.blob(); cert = r.blob(); client = r.blob()
                 statement = cbor2.loads(r.blob()); assert r.blob() == b'packed'; r.end()
                 self.validate_client(client, salt, 'webauthn.create')

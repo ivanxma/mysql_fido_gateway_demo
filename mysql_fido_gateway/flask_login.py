@@ -16,7 +16,7 @@ from flask import Blueprint, Flask, current_app, g, jsonify, redirect, render_te
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
-from mysql_fido_gateway.config import mysql_config, loopback_allowed
+from mysql_fido_gateway.config import mysql_config, loopback_allowed, registration_mode as configured_registration_mode
 
 
 class SessionEnded(Exception):
@@ -262,7 +262,8 @@ class GatewayLogin:
         if not isinstance(target, dict):
             target = {}
         return {'csrf': session['csrf'], 'auth_base_template': self.auth_base_template,
-                'mysql_target': target.get('host'), 'mysql_port': target.get('port')}
+                'mysql_target': target.get('host'), 'mysql_port': target.get('port'),
+                'registration_mode': getattr(self.gateway, 'registration_mode', 'browser')}
 
     def current(self):
         with self.lock:
@@ -414,7 +415,8 @@ class GatewayLogin:
             flow.finish({'type': 'success', 'result': {
                 'registered': True, 'message': 'Your passkey is registered. You can now sign in.'}})
         except Exception as error:
-            message = (f'MySQL registration failed (error {error.errno}). Check your account details.'
+            message = (str(error) if isinstance(error, BridgeError) else
+                       f'MySQL registration failed (error {error.errno}). Check your account details.'
                        if isinstance(error, mysql.connector.Error)
                        else 'Registration was cancelled or could not be completed. Try again with a compatible security key.')
             flow.finish({'type': 'error', 'message': message})
@@ -529,6 +531,7 @@ getConnection = get_connection
 
 
 def create_gateway_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None,
+                       registration_mode=None,
                        session_seconds=None, clock=time.monotonic,
                        login_template='mysql_fido_gateway/login.html',
                        registration_template='mysql_fido_gateway/register.html',
@@ -556,7 +559,8 @@ def create_gateway_app(root, gateway=None, *, db_config=None, allow_loopback_pla
     if gateway is None:
         config = mysql_config(db_config)
         gateway = Gateway(config, origin, rp_id,
-                          allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext))
+                          allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext),
+                          registration_mode=configured_registration_mode(registration_mode))
     auth = GatewayLogin(app, gateway, origin, session_seconds=ttl, clock=clock,
                         login_template=login_template, registration_template=registration_template,
                         auth_base_template=auth_base_template)

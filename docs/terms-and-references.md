@@ -4,7 +4,7 @@
 
 **Purpose:** enable a user with a browser-local security key to complete the MySQL server's password plus WebAuthn authentication, then execute SQL under that user's accepted database account.
 
-**Scope:** library 0.3.0: the authentication adapter and browser callback contract, broker/HTTP transport, demo setup/create/register/login actions, retained Flask login sessions and transaction/cursor API, wheel installation, and the supported prototype profile.
+**Scope:** library 0.3.1: the authentication adapter and browser callback contract, broker/HTTP transport, demo setup/create/register/login actions, retained Flask login sessions and transaction/cursor API, wheel installation, and the supported prototype profile.
 
 **Responsibilities:**
 

@@ -14,10 +14,12 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 
 from mysql_fido_gateway import BridgeError, Gateway
 from mysql_fido_gateway.broker import Broker
-from mysql_fido_gateway.config import mysql_config, loopback_allowed
+from mysql_fido_gateway.codec import check_registration_mode
+from mysql_fido_gateway.config import mysql_config, loopback_allowed, registration_mode as configured_registration_mode
 
 
-def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
+def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_plaintext=None,
+                registration_mode=None, allow_registration_mode_selection=False):
     app = Flask(__name__, root_path=str(root.resolve()))
     origin = os.environ.get('BROWSER_ORIGIN', 'https://localhost').rstrip('/')
     rp_id = os.environ.get('RP_ID', 'localhost')
@@ -34,7 +36,8 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
     db_config = mysql_config(db_config if db_config is not None else getattr(gateway, 'db_config', None),
                              read_timeout=180, write_timeout=15)
     gateway = gateway or Gateway(db_config, origin, rp_id,
-                                allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext))
+                                allow_loopback_plaintext=loopback_allowed(allow_loopback_plaintext),
+                                registration_mode=configured_registration_mode(registration_mode))
     broker = Broker()
     app.extensions.update(browser_gateway=gateway, ceremony_broker=broker)
 
@@ -66,7 +69,9 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
         return render_template('index.html', csrf=session['csrf'], origin=origin, rp_id=rp_id,
                                admin_enabled=bool(os.environ.get('ADMIN_TOKEN')),
                                admin_token=os.environ.get('ADMIN_TOKEN', '') if 'create' in actions else '',
-                               db_host=db_config['host'], db_port=db_config['port'])
+                               db_host=db_config['host'], db_port=db_config['port'],
+                               registration_mode=getattr(gateway, 'registration_mode', 'browser'),
+                               allow_registration_mode_selection=allow_registration_mode_selection)
 
     @app.errorhandler(BridgeError)
     def bridge_error(error):
@@ -97,6 +102,10 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
             admin_password = body.get('root_password')
             if not isinstance(admin_password, str) or not admin_password:
                 return jsonify(error='Enter the root password'), 400
+        registration_options = {}
+        if action == 'register' and allow_registration_mode_selection:
+            registration_options['registration_mode'] = check_registration_mode(
+                body.get('registration_mode', getattr(gateway, 'registration_mode', 'browser')))
         flow = broker.create(session['owner'])
         reset = body.get('reset') is True
         # Request data is deliberately not placed in Flask's client-side cookie.
@@ -149,7 +158,8 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
                                             'AND IDENTIFIED WITH authentication_webauthn')
                             result = {'message': f'Created {username}@{host}. Register its YubiKey next.'}
                 elif action == 'register':
-                    result = gateway.register(username, password, flow.ask, on_command=report_command)
+                    result = gateway.register(username, password, flow.ask, on_command=report_command,
+                                              **registration_options)
                     result['message'] = 'MySQL accepted registration. Test login next.'
                 else:
                     connection = gateway.connect(username, password, flow.ask)
@@ -186,8 +196,11 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
                     message += 'Setup may be partially applied. Check root privileges, SET PERSIST support, and the server settings before retrying. '
                 if dropped:
                     message += 'The old account was dropped; recreation failed. '
-                message += ('Check the server error log, RP/origin compatibility, attestation support, '
-                            'account host, password, and server timeouts. No application-authentication fallback was used.')
+                if error.errno == 4061 and action == 'register':
+                    message += ('Check the server error log and registration attestation compatibility. ')
+                elif error.errno != 1045:
+                    message += 'Check the MySQL server error log for this operation. '
+                message += 'No application-authentication fallback was used.'
                 flow.finish({'type': 'error', 'message': message})
             except Exception as error:
                 app.logger.warning('Gateway failure: %s', type(error).__name__)
@@ -219,13 +232,16 @@ def _create_app(root, actions, gateway=None, *, db_config=None, allow_loopback_p
     return app
 
 
-def create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
-    """Return the combined demo, using templates/static under the Path root."""
+def create_demo_app(root, gateway=None, *, db_config=None, allow_loopback_plaintext=None,
+                    registration_mode=None):
+    """Return the combined demo with per-registration mode selection in its form."""
     return _create_app(root, {'setup', 'create', 'register', 'login'}, gateway,
-                       db_config=db_config, allow_loopback_plaintext=allow_loopback_plaintext)
+                       db_config=db_config, allow_loopback_plaintext=allow_loopback_plaintext,
+                       registration_mode=registration_mode, allow_registration_mode_selection=True)
 
 
-def create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None):
+def create_action_app(root, action, gateway=None, *, db_config=None, allow_loopback_plaintext=None,
+                      registration_mode=None):
     """Return a single-action tutorial: create user or register a YubiKey.
 
     root is a Path containing templates and static. action is 'create' or
@@ -235,4 +251,4 @@ def create_action_app(root, action, gateway=None, *, db_config=None, allow_loopb
     if action not in {'create', 'register'}:
         raise BridgeError('Choose the create or register tutorial')
     return _create_app(root, {action}, gateway, db_config=db_config,
-                       allow_loopback_plaintext=allow_loopback_plaintext)
+                       allow_loopback_plaintext=allow_loopback_plaintext, registration_mode=registration_mode)

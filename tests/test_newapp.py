@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from mysql_fido_gateway.cli import newapp
+from mysql_fido_gateway.runtime import LIBRARY_VERSION
 
 
 class NewAppTests(unittest.TestCase):
@@ -25,6 +26,8 @@ class NewAppTests(unittest.TestCase):
             self.assertIn('DB_HOST=127.0.0.1', (result/'.env').read_text())
             self.assertIn('DB_PORT=3307', (result/'.env').read_text())
             self.assertNotIn('DB_PASSWORD=', (result/'.env').read_text())
+            self.assertIn(f'/downloads/{LIBRARY_VERSION}/mysql_browser_fido_gateway-{LIBRARY_VERSION}-py3-none-any.whl',
+                          (result/'requirements.txt').read_text())
             for file in ['start.py','start.command','start.bat','LICENSE',
                          'templates/auth/login.html','templates/auth/register.html',
                          'static/auth/register.js','static/auth/login.js']:
